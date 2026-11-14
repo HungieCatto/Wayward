@@ -109,6 +109,8 @@ h2{font:800 20px/1.15 var(--display);margin:0 0 12px;letter-spacing:.01em;text-w
 .wxchip.ok b{color:var(--fg)}
 .wxchip.warn{background:#f5a524;color:#2b1a00}
 .wxchip.bad{background:#d93a3a;color:#fff}
+.wxchip.glare{background:#ffd23f;color:#2b2200}
+.wxchip.night{background:#1d2a5c;color:#e6ebff}
 .wxchip:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
 .wxpop{background:var(--surface);color:var(--fg);border-radius:14px;padding:12px 14px;box-shadow:var(--shadow);font-size:13px;line-height:1.4;
   border-left:4px solid #f5a524}
@@ -211,6 +213,8 @@ ol.turns .km{color:var(--muted);font-variant-numeric:tabular-nums;white-space:no
 <div class="wx" id="wx" aria-live="polite">
   <button class="wxchip" id="wxChip" hidden aria-expanded="false"></button>
   <div class="wxdetail" id="wxDetail" hidden></div>
+  <button class="wxchip" id="litChip" hidden aria-expanded="false"></button>
+  <div class="wxdetail" id="litDetail" hidden></div>
   <div class="wxpop" id="wxPop" hidden role="dialog" aria-label="Ice on the route">
     <p id="wxPopText"></p>
     <div class="acts"><button class="btn sm" id="wxNew">Generate new route</button><button class="btn ghost sm" id="wxKeep">Keep this one</button></div>
@@ -663,8 +667,9 @@ async function valhalla(origin, wps, hw, by, wpType = 'through', snap = true, en
 // The free routing server allows about one request per second: wait only as long as needed.
 let lastV = 0;
 async function vpost(path, body) {
-  const w = lastV + 1050 - Date.now(); if (w > 0) await sleep(w);
-  lastV = Date.now();
+  // performance.now() only counts forward, so a clock change on the phone can't cause a long wait
+  const w = lastV + 1050 - performance.now(); if (w > 0) await sleep(Math.min(w, 1050));
+  lastV = performance.now();
   const res = await fetch(VALHALLA.replace('/route', '/' + path), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
   const j = await res.json().catch(() => ({}));
   if (!res.ok || j.error || (/route$/.test(path) && !j.trip)) { const e = new Error(j.error || ('HTTP ' + res.status)); e.status = res.status; throw e; }
@@ -1256,7 +1261,7 @@ const FREEZING = [56, 57, 66, 67], SNOWC = [71, 73, 75, 77, 85, 86], FOGC = [45,
 let avoidAreas = [], icePins = [], wxSeq = 0, areaWxAt = 0;
 async function weatherAt(points) {
   const url = `${WX}?latitude=${points.map(p => p.lat.toFixed(4)).join(',')}&longitude=${points.map(p => p.lon.toFixed(4)).join(',')}` +
-    '&hourly=temperature_2m,relative_humidity_2m,precipitation,snowfall,weather_code,visibility,soil_temperature_0cm&past_hours=6&forecast_hours=4&timeformat=unixtime';
+    '&hourly=temperature_2m,relative_humidity_2m,precipitation,snowfall,weather_code,visibility,soil_temperature_0cm,cloud_cover,snow_depth&past_hours=6&forecast_hours=6&timeformat=unixtime';
   const j = await (await fetch(url)).json();
   const arr = Array.isArray(j) ? j : [j], now = Date.now() / 1000;
   return arr.map(d => {
@@ -1273,11 +1278,15 @@ async function weatherAt(points) {
     const ice = freezing || (cold && wet) || frost || win.some(i => code(i) === 48);
     const snow = win.some(i => SNOWC.includes(code(i)) || h.snowfall[i] > .1) || sum(past, 'snowfall') >= .5;
     const fog = win.some(i => FOGC.includes(code(i)) || (h.visibility[i] != null && h.visibility[i] < 300));
-    return {ice, freezing, snow, fog, temp: h.temperature_2m[cur]};
+    const wetRoad = sum(past.slice(-3), 'precipitation') > .1 || win.some(i => h.precipitation[i] > 0);
+    return {ice, freezing, snow, fog, temp: h.temperature_2m[cur], T, cloud: h.cloud_cover || [], snowDepth: (h.snow_depth || [])[cur] || 0, wetRoad};
   });
 }
 const WXICON = {
-  ok: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  ok: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16.5 9"/></svg>',
+  sun: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  moon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>',
+  eye: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
   ice: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.5"/></svg>',
   snow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2v20M3.3 7l17.4 10M3.3 17 20.7 7M9 4l3 2 3-2M9 20l3-2 3 2"/></svg>',
   fog: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 8h16M2 12h20M4 16h16M7 20h10"/></svg>'
@@ -1289,6 +1298,107 @@ function setChip(kind, icon, title, sub, details) {
   $('wxDetail').innerHTML = details; $('wxDetail').hidden = true; c.setAttribute('aria-expanded', 'false');
 }
 $('wxChip').onclick = () => { const d = $('wxDetail'); d.hidden = !d.hidden; $('wxChip').setAttribute('aria-expanded', String(!d.hidden)); };
+/* ---------- Light forecast: low sun in your eyes, glaring roads, darkness ----------
+   Sun position is calculated on the phone (standard solar formulas, as in SunCalc).
+   Along the route, every ~200 m: when will you be there (based on the drive time), which way are
+   you heading, and where is the sun then?
+   glare  = sun 0–20° above the horizon, less than 25° from straight ahead, clouds under 60 %
+   bright = wet or snow-covered road with the sun up and clouds under 50 % (reflections)
+   dark   = sun more than 3° below the horizon (after dusk / before dawn) */
+function sunPos(date, lat, lon) {
+  const r = Math.PI / 180, d = date / 864e5 - .5 + 2440588 - 2451545, e = r * 23.4397;
+  const M = r * (357.5291 + .98560028 * d);
+  const L = M + r * (1.9148 * Math.sin(M) + .02 * Math.sin(2 * M) + .0003 * Math.sin(3 * M)) + r * 102.9372 + Math.PI;
+  const dec = Math.asin(Math.sin(e) * Math.sin(L)), ra = Math.atan2(Math.sin(L) * Math.cos(e), Math.cos(L));
+  const H = r * (280.16 + 360.9856235 * d) + r * lon - ra, phi = r * lat;
+  const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi));
+  return {elev: Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(H)) / r, bearing: (az / r + 180 + 360) % 360};
+}
+const hhmm = t => new Date(t).toLocaleTimeString('de-AT', {hour: '2-digit', minute: '2-digit'});
+const span = (a, b) => hhmm(a) === hhmm(b) ? `around ${hhmm(a)}` : `${hhmm(a)}–${hhmm(b)}`;
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+const compass = b => COMPASS[Math.round(((b % 360) + 360) % 360 / 45) % 8];
+const DARK = -3;
+// next time (from t) the sun crosses the darkness line, searched in 5-minute steps for 24 h
+function nextLightChange(lat, lon, t) {
+  const darkNow = sunPos(t, lat, lon).elev < DARK;
+  for (let k = 1; k <= 288; k++) { const u = t + k * 3e5; if ((sunPos(u, lat, lon).elev < DARK) !== darkNow) return u; }
+  return null;
+}
+const cloudAt = (w, t) => { if (!w || !w.T || !w.cloud.length) return 50; let i = 0; while (i < w.T.length - 1 && w.T[i + 1] * 1000 <= t) i++; return w.cloud[i] ?? 50; };
+function setLight(kind, icon, title, sub, details) {
+  const c = $('litChip');
+  c.className = 'wxchip ' + kind; c.hidden = false;
+  c.innerHTML = WXICON[icon] + `<span><b>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>`;
+  $('litDetail').innerHTML = details; $('litDetail').hidden = true; c.setAttribute('aria-expanded', 'false');
+}
+$('litChip').onclick = () => { const d = $('litDetail'); d.hidden = !d.hidden; $('litChip').setAttribute('aria-expanded', String(!d.hidden)); };
+
+// Before a route: just where you are, right now.
+function lightArea(w) {
+  if (!me) return;
+  const now = Date.now(), s = sunPos(now, me.lat, me.lon), ch = nextLightChange(me.lat, me.lon, now);
+  if (s.elev < DARK) return setLight('night', 'moon', 'Dark out', ch ? `Light again from ${hhmm(ch)}` : '',
+    `The sun is below the horizon. Expect a drive in the dark with headlights${ch ? ` until about ${hhmm(ch)}` : ''}.`);
+  const cloud = cloudAt(w, now);
+  if (s.elev < 20 && cloud < 60) return setLight('glare', 'sun', 'Low sun', `Sun in the ${compass(s.bearing)} · ${Math.round(s.elev)}° high`,
+    `The sun is low in the ${compass(s.bearing)}. Driving ${compass(s.bearing)} it will be in your eyes. Generate a route to see exactly when.` +
+    (ch ? ` Dark from about ${hhmm(ch)}.` : ''));
+  if (cloud < 50 && (w.wetRoad || w.snowDepth > .01)) return setLight('glare', 'sun', 'Bright, reflective roads', w.snowDepth > .01 ? 'Sun on snow' : 'Sun on wet roads',
+    'With the sun out, the roads may glare. Sunglasses help.');
+  setLight('ok', 'eye', 'Good light', ch ? `Daylight until ${hhmm(ch)}` : '', `No low sun or darkness expected right now${ch ? `; it gets dark around ${hhmm(ch)}` : ''}.`);
+}
+
+// With a route: walk along it in time.
+function lightRoute(rt, pts, res) {
+  const start = Date.now(), dur = (rt.sec || 0) * 1000, sh = rt.shape;
+  const cum = [0]; for (let i = 1; i < sh.length; i++) cum.push(cum[i - 1] + hav(sh[i - 1], sh[i]));
+  const tot = cum[cum.length - 1] || 1, near = p => { let bi = 0, bd = 1e9; pts.forEach((q, i) => { const d = hav([q.lat, q.lon], p); if (d < bd) { bd = d; bi = i; } }); return bi; };
+  const samples = []; let j = 0;
+  for (let km = 0; km <= tot; km += .2) {
+    while (j < sh.length - 2 && cum[j + 1] < km) j++;
+    let k = j + 1; while (k < sh.length - 1 && cum[k] - cum[j] < .1) k++;
+    const a = sh[j], b = sh[k], t = start + dur * km / tot;
+    const head = bearing({lat: a[0], lon: a[1]}, {lat: b[0], lon: b[1]}), s = sunPos(t, a[0], a[1]);
+    const w = res[near(a)] || {}, cloud = cloudAt(w, t), diff = Math.abs(((s.bearing - head + 540) % 360) - 180);
+    samples.push({km, t, head, dark: s.elev < DARK, glare: s.elev > 0 && s.elev < 20 && diff < 25 && cloud < 60,
+      bright: s.elev > 0 && cloud < 50 && (w.wetRoad || w.snowDepth > .01), snowy: w.snowDepth > .01});
+  }
+  // Stretches where it applies; gaps under 1 km are bridged so one sunny stretch isn't split into crumbs.
+  const runs = key => { const out = []; let cur = null, gap = 0;
+    samples.forEach(x => {
+      if (x[key]) { if (!cur) out.push(cur = {from: x, to: x, n: 0, heads: []}); cur.to = x; cur.n++; cur.heads.push(x.head); gap = 0; }
+      else if (cur && ++gap > 5) { cur = null; gap = 0; }
+    });
+    return out.filter(r => r.n >= 2); };  // at least ~400 m of glare in total
+  const glare = runs('glare'), dark = samples.filter(x => x.dark), bright = samples.filter(x => x.bright && !x.dark);
+  const avgHead = hs => { const x = hs.reduce((s, h) => s + Math.cos(h * Math.PI / 180), 0), y = hs.reduce((s, h) => s + Math.sin(h * Math.PI / 180), 0); return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360; };
+  const lines = [];
+  glare.forEach(g => lines.push(`Sun in your eyes ${span(g.from.t, g.to.t)} (km ${Math.round(g.from.km)}–${Math.max(1, Math.round(g.to.km))}), heading ${compass(avgHead(g.heads))}`));
+  const isBright = bright.length > samples.length * .3;
+  if (isBright) lines.push(bright.some(x => x.snowy) ? 'Sun on snow: bright glare off the ground' : 'Sun on wet roads: reflections likely');
+  const end = start + dur, first = samples[0], lastPt = sh[sh.length - 1];
+  let darkText = '';
+  if (dark.length === samples.length) darkText = 'Dark the whole drive';
+  else if (dark.length && first.dark) darkText = `Dark until about ${hhmm(dark[dark.length - 1].t)}`;
+  else if (dark.length) darkText = `Dark from about ${hhmm(dark[0].t)}`;
+  if (darkText) lines.push(darkText + ' · headlights on');
+  const details = `<b>Light along this route, ${hhmm(start)}–${hhmm(end)}</b>` +
+    (lines.length ? `<ul>${lines.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<br>No low sun in your eyes and daylight for the whole drive.');
+  if (glare.length) {
+    const g = glare[0];
+    setLight('glare', 'sun', 'Sun in your eyes', `${span(g.from.t, g.to.t)} · heading ${compass(avgHead(g.heads))}${glare.length > 1 ? ` (+${glare.length - 1} more)` : ''}`, details);
+  } else if (isBright) {
+    setLight('glare', 'sun', bright.some(x => x.snowy) ? 'Bright snow glare' : 'Bright, reflective roads', 'Sunglasses help', details);
+  } else if (darkText) {
+    setLight('night', 'moon', dark.length === samples.length ? 'Night drive' : first.dark ? 'Starts in the dark' : 'Gets dark on the way',
+      dark.length === samples.length ? 'Headlights the whole way' : darkText, details);
+  } else {
+    const ch = nextLightChange(lastPt[0], lastPt[1], end);
+    setLight('ok', 'eye', 'Good light all the way', ch ? `Daylight until ${hhmm(ch)}` : 'No glare expected', details);
+  }
+}
+
 function clearIcePins() { icePins.forEach(l => map.removeLayer(l)); icePins = []; }
 
 // Before a route exists: the weather where you are.
@@ -1297,6 +1407,7 @@ async function checkAreaWeather() {
   areaWxAt = Date.now();
   try {
     const [w] = await weatherAt([me]);
+    lightArea(w);
     if (route) return;
     const why = [w.freezing && 'freezing rain', w.ice && !w.freezing && 'icy roads likely', w.snow && 'snow on the roads', w.fog && 'thick fog'].filter(Boolean);
     const t = w.temp != null ? `${Math.round(w.temp)} °C` : '';
@@ -1317,6 +1428,7 @@ async function checkRouteWeather(rt) {
   let res;
   try { res = await weatherAt(pts); } catch { return; }
   if (seq !== wxSeq || route !== rt) return;
+  lightRoute(rt, pts, res);
   const N = res.length, share = k => res.filter(r => r[k]).length / N;
   const temps = res.map(r => r.temp).filter(t => t != null);
   const tr = temps.length ? `${Math.round(Math.min(...temps))} to ${Math.round(Math.max(...temps))} °C` : '';
