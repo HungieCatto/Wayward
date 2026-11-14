@@ -1,0 +1,16 @@
+{
+  "name": "Zufallsroute – random driving routes",
+  "short_name": "Zufallsroute",
+  "description": "Random driving routes from your location: loops or one way, with or without highways.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#10282f",
+  "theme_color": "#10282f",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

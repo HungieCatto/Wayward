@@ -1,0 +1,1527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Zufallsroute</title>
+<meta name="description" content="Random driving routes from your location: loops or one way, with or without highways.">
+<meta name="theme-color" content="#10282f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Zufallsroute">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: full-bleed map, floating top bar (app name + locate button), bottom sheet for controls/result. */
+:root{
+  --bg:#eef2f3; --surface:#ffffff; --surface-2:#f3f6f7; --fg:#10282f; --muted:#5b7076;
+  --line:#d9e2e4; --sign:#1456b8; --sign-fg:#ffffff; --signal:#ff5c48; --ok:#1d8a5b; --warn:#c77700;
+  --route:#1456b8; --route-case:#ffffff; --shadow:0 10px 30px rgba(16,40,47,.18);
+  --display:"Archivo","Arial Narrow",system-ui,sans-serif; --body:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0b1b20; --surface:#122a31; --surface-2:#18353d; --fg:#e8f0f1; --muted:#93a9ae;
+    --line:#24444c; --sign:#3d82f0; --signal:#ff6f5c; --ok:#3ccf8e; --warn:#f0a83a;
+    --route:#5aa0ff; --route-case:#0b1b20; --shadow:0 10px 30px rgba(0,0,0,.45); color-scheme:dark; }
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.45 var(--body);overflow:hidden;-webkit-tap-highlight-color:transparent}
+#map{position:fixed;inset:0;z-index:0;background:var(--bg)}
+.leaflet-control-attribution{font-size:10px;display:none}
+.attr-open .leaflet-control-attribution{display:block}
+.attrbtn{width:24px;height:24px;border-radius:50%;border:0;background:var(--surface);color:var(--muted);font:700 13px/24px Georgia,serif;
+  box-shadow:0 1px 4px rgba(0,0,0,.3);cursor:pointer;padding:0;opacity:.85}
+.attrbtn:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+.tiles-dark{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9) saturate(.6)}
+.leaflet-bottom.leaflet-right{position:fixed;bottom:calc(env(safe-area-inset-bottom,0px) + 6px);right:max(6px,env(safe-area-inset-right,0px))}
+/* On narrow screens the panel spans the full width: sit just above its collapsed bar instead */
+@media (max-width:560px){.leaflet-bottom.leaflet-right{bottom:calc(var(--peek,90px) + 6px)}}
+
+/* Top bar */
+.top{position:fixed;z-index:20;left:0;right:0;top:0;display:flex;gap:10px;align-items:center;
+  padding:calc(env(safe-area-inset-top,0px) + 10px) max(14px,env(safe-area-inset-right,0px)) 0 max(14px,env(safe-area-inset-left,0px));pointer-events:none}
+.top>*{pointer-events:auto}
+.brand{flex:1;min-width:0;display:flex;align-items:center;gap:10px;background:var(--surface);border-radius:14px;padding:6px 14px 6px 6px;box-shadow:var(--shadow);height:44px}
+.brand img{width:32px;height:32px;border-radius:8px}
+.brand b{font:800 17px/1 var(--display);letter-spacing:.01em}
+.locbtn{width:44px;height:44px;flex:none;border-radius:14px;background:var(--surface);border:0;box-shadow:var(--shadow);
+  color:var(--fg);display:grid;place-items:center;cursor:pointer}
+
+/* Bottom sheet */
+.sheet{position:fixed;z-index:20;left:0;right:0;bottom:0;margin:0 auto;max-width:520px;background:var(--surface);
+  border-radius:22px 22px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.18);
+  padding:10px max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 16px) max(16px,env(safe-area-inset-left,0px));
+  max-height:78vh;overflow:auto}
+.grab{display:block;width:100%;height:28px;margin:-10px 0 4px;padding:0;border:0;background:transparent;cursor:grab;touch-action:none}
+.grab span{display:block;width:44px;height:5px;border-radius:3px;background:var(--line);margin:9px auto}
+.grab:hover span{background:var(--muted)}
+.grab:focus-visible{outline:2px solid var(--signal);outline-offset:-2px;border-radius:8px}
+.sheet.collapsed{transform:translateY(calc(100% - var(--peek,90px)));overflow:hidden}
+.sheet.dragging{transition:none!important;overflow:hidden}
+.grab:active{cursor:grabbing}
+h2{font:800 20px/1.15 var(--display);margin:0 0 12px;letter-spacing:.01em;text-wrap:balance}
+.label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+
+.field{display:flex;align-items:center;gap:10px;background:var(--surface-2);border-radius:14px;padding:10px 14px}
+.field label{flex:1}
+.dist{display:flex;align-items:baseline;gap:4px}
+.dist input{width:84px;border:0;background:transparent;color:var(--fg);font:800 28px/1 var(--display);text-align:right;
+  font-variant-numeric:tabular-nums;outline:none;padding:0}
+.dist span{font:700 15px var(--display);color:var(--muted)}
+.chips{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:8px 0 12px}
+.chip{border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:999px;padding:6px 0;white-space:nowrap;font:600 13px var(--body);cursor:pointer}
+.chip:active{background:var(--surface-2)}
+
+.toggles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.tog{background:var(--surface-2);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;cursor:pointer;position:relative}
+.tog .t{font:700 15px var(--display)}
+.tog .d{font-size:12px;color:var(--muted);line-height:1.3;min-height:2.6em}
+.tog input{position:absolute;opacity:0;pointer-events:none}
+.tog.wide{grid-column:1 / -1;flex-direction:row;align-items:center;justify-content:space-between;gap:12px}
+.tog.wide .txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.tog.wide .d{min-height:0}
+.tog.wide .sw{flex:none}
+.startpin.finish{background:var(--ok)}
+.startpin.stop{background:var(--sign);border-radius:50%}
+
+.legend{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--muted);margin:-4px 2px 12px}
+.legend i{flex:1;height:6px;border-radius:3px;background:linear-gradient(90deg,rgb(47,124,246),rgb(167,89,230),rgb(255,122,61))}
+
+
+/* Road weather chip + popup */
+.wx{position:fixed;z-index:22;right:max(14px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 64px);
+  display:flex;flex-direction:column;align-items:flex-end;gap:8px;max-width:min(320px,calc(100% - 28px))}
+.wxchip{display:flex;align-items:center;gap:8px;border:0;border-radius:12px;padding:8px 12px;font:600 13px/1.25 var(--body);
+  box-shadow:var(--shadow);cursor:pointer;text-align:left;background:var(--surface);color:var(--fg)}
+.wxchip svg{flex:none}
+.wxchip b{display:block;font:700 14px/1.2 var(--display)}
+.wxchip small{display:block;font-weight:500;opacity:.85}
+.wxchip.ok{color:var(--ok)}
+.wxchip.ok b{color:var(--fg)}
+.wxchip.warn{background:#f5a524;color:#2b1a00}
+.wxchip.bad{background:#d93a3a;color:#fff}
+.wxchip:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+.wxpop{background:var(--surface);color:var(--fg);border-radius:14px;padding:12px 14px;box-shadow:var(--shadow);font-size:13px;line-height:1.4;
+  border-left:4px solid #f5a524}
+.wxpop p{margin:0 0 10px}
+.wxpop .acts{display:flex;gap:8px}
+.wxpop .acts .btn{padding:9px 10px;font-size:13px;border-radius:10px}
+.wxdetail{background:var(--surface);color:var(--fg);border-radius:14px;padding:10px 14px;box-shadow:var(--shadow);font-size:12.5px;line-height:1.45}
+.wxdetail ul{margin:4px 0 0;padding-left:18px}
+.picking .wx{display:none}
+.icepin{width:18px;height:18px;border-radius:50%;background:#7cc4ff;border:3px solid #fff;box-shadow:0 0 0 6px rgba(124,196,255,.35)}
+
+.bymode{margin:-6px 0 14px;display:flex;flex-direction:column;gap:6px}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--surface-2);border-radius:12px;padding:3px;gap:3px}
+.seg button{border:0;background:transparent;color:var(--muted);font:700 13px var(--body);padding:8px 6px;border-radius:9px;cursor:pointer}
+.seg button[aria-checked="true"]{background:var(--sign);color:#fff}
+.seg button:focus-visible{outline:2px solid var(--signal);outline-offset:1px}
+.zonelabel{background:var(--surface);color:var(--fg);border-radius:8px;padding:3px 7px;font:700 11px var(--body);white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.3);transform:translate(-50%,-50%);display:inline-block}
+
+/* Stops */
+.stops{margin-bottom:14px;display:flex;flex-direction:column;gap:8px}
+.stoplist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.stoplist:empty{display:none}
+.stoplist li{display:flex;align-items:center;gap:10px;background:var(--surface-2);border-radius:12px;padding:8px 6px 8px 10px}
+.stoplist .n{width:22px;height:22px;flex:none;border-radius:50%;background:var(--sign);color:#fff;display:grid;place-items:center;font:800 11px var(--display)}
+.stoplist .nm{flex:1;min-width:0;font-weight:600;font-size:14px;line-height:1.25}
+.stoplist .nm small{display:block;color:var(--muted);font-weight:500;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stoplist button{border:0;background:none;color:var(--muted);font-size:20px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:8px}
+.addstop{display:flex;align-items:center;gap:8px;border:1.5px dashed var(--line);background:transparent;color:var(--fg);border-radius:12px;padding:10px 12px;font:600 14px var(--body);cursor:pointer;text-align:left}
+.addstop:focus-visible,.stoplist button:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+.addpanel{display:flex;flex-direction:column;gap:6px}
+.searchrow{display:flex;gap:8px}
+.searchrow input{flex:1;min-width:0;border:1px solid var(--line);background:var(--surface-2);color:var(--fg);border-radius:12px;padding:10px 12px;font:500 16px var(--body)}
+.searchrow input:focus{outline:2px solid var(--sign);outline-offset:0}
+.results{list-style:none;margin:0;padding:0;border-radius:12px;overflow:hidden;background:var(--surface-2)}
+.results:empty{display:none}
+.results li{padding:10px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:14px;font-weight:600}
+.results li:last-child{border-bottom:0}
+.results li small{display:block;color:var(--muted);font-weight:500;font-size:12px}
+.results li.note{cursor:default;color:var(--muted);font-weight:500}
+.picking .sheet{transform:translateY(calc(100% - 120px));transition:transform .25s}
+.sheet{transition:transform .25s}
+.pickbar{position:fixed;z-index:25;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 66px);background:var(--sign);color:#fff;
+  padding:10px 14px;border-radius:12px;font-weight:600;font-size:14px;box-shadow:var(--shadow);display:flex;gap:12px;align-items:center;width:max-content;max-width:calc(100% - 32px)}
+.pickbar button{background:rgba(255,255,255,.2);border:0;color:#fff;font:700 13px var(--body);padding:6px 10px;border-radius:8px;cursor:pointer}
+.sw{width:44px;height:26px;border-radius:13px;background:var(--line);position:relative;transition:background .2s}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s}
+.tog input:checked + .sw{background:var(--sign)}
+.tog input:checked + .sw::after{transform:translateX(18px)}
+.tog input:focus-visible + .sw{outline:2px solid var(--sign);outline-offset:2px}
+
+.btn{width:100%;border:0;border-radius:16px;padding:15px 18px;font:800 17px var(--display);letter-spacing:.02em;cursor:pointer;
+  background:var(--sign);color:var(--sign-fg);display:flex;align-items:center;justify-content:center;gap:10px}
+.btn:disabled{opacity:.6;cursor:progress}
+.btn.ghost{background:var(--surface-2);color:var(--fg)}
+.btn.sm{padding:11px 12px;font-size:14px;border-radius:12px}
+.btn:focus-visible,.chip:focus-visible,.locbtn:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+
+.spin{width:18px;height:18px;border-radius:50%;border:2.5px solid currentColor;border-right-color:transparent;animation:r .8s linear infinite}
+@keyframes r{to{transform:rotate(360deg)}}
+
+.msg{font-size:13px;color:var(--muted);margin:10px 2px 0;min-height:1.2em}
+.msg.err{color:var(--signal)}
+
+/* Result */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.stat{background:var(--surface-2);border-radius:14px;padding:10px 12px}
+.stat{min-width:0}
+.stat b{display:block;font:800 19px/1.15 var(--display);font-variant-numeric:tabular-nums;white-space:nowrap}
+.pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.pill{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;background:var(--surface-2)}
+.pill.hw{color:var(--warn)} .pill.nohw{color:var(--ok)} .pill.by{color:var(--sign)}
+.stack{display:flex;flex-direction:column;gap:8px}
+details{background:var(--surface-2);border-radius:14px;padding:10px 14px}
+summary{cursor:pointer;font-weight:600}
+ol.turns{list-style:none;margin:8px 0 0;padding:0 8px 0 0;font-size:13px;max-height:30vh;overflow:auto}
+ol.turns li{display:grid;grid-template-columns:2.2em 1fr auto;gap:8px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line)}
+ol.turns li:last-child{border-bottom:0}
+ol.turns .no{color:var(--muted);font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+ol.turns .km{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tip{font-size:12px;color:var(--muted);margin:2px 2px 0}
+.linkish{background:none;border:0;color:var(--muted);font:600 13px var(--body);text-decoration:underline;cursor:pointer;padding:6px;margin:4px auto 0;display:block}
+
+.me{width:18px;height:18px;border-radius:50%;background:var(--sign);border:3px solid #fff;box-shadow:0 0 0 6px rgba(20,86,184,.25)}
+.startpin{width:22px;height:22px;border-radius:6px;background:var(--signal);border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4);
+  display:grid;place-items:center;color:#fff;font:800 11px var(--display)}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div id="map" aria-label="Map"></div>
+
+<div class="top">
+  <div class="brand"><img src="icon-192.png" alt=""><b>Zufallsroute</b></div>
+  <button class="locbtn" id="locBtn" aria-label="Centre on my location">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+</div>
+
+<div class="wx" id="wx" aria-live="polite">
+  <button class="wxchip" id="wxChip" hidden aria-expanded="false"></button>
+  <div class="wxdetail" id="wxDetail" hidden></div>
+  <div class="wxpop" id="wxPop" hidden role="dialog" aria-label="Ice on the route">
+    <p id="wxPopText"></p>
+    <div class="acts"><button class="btn sm" id="wxNew">Generate new route</button><button class="btn ghost sm" id="wxKeep">Keep this one</button></div>
+  </div>
+</div>
+<div class="pickbar" id="pickBar" hidden><span>Tap the map where the route should go</span><button id="pickCancel">Cancel</button></div>
+
+<section class="sheet" id="sheet" aria-live="polite">
+  <button class="grab" id="grab" aria-label="Hide panel" aria-expanded="true"><span></span></button>
+
+  <!-- Setup view -->
+  <div id="setup">
+    <h2>Where to today?</h2>
+    <div class="field">
+      <label for="dist" class="label">Total distance</label>
+      <div class="dist"><input id="dist" type="number" inputmode="decimal" min="2" max="300" step="1" value="25"><span>km</span></div>
+    </div>
+    <div class="chips" id="chips">
+      <button class="chip" data-km="10">10 km</button><button class="chip" data-km="25">25 km</button>
+      <button class="chip" data-km="50">50 km</button><button class="chip" data-km="75">75 km</button><button class="chip" data-km="100">100 km</button>
+    </div>
+    <div class="toggles">
+      <label class="tog wide" for="loop">
+        <span class="txt"><span class="t">Round trip</span>
+        <span class="d" id="loopDesc">Loops back to where you started</span></span>
+        <input type="checkbox" id="loop" role="switch" checked><span class="sw"></span>
+      </label>
+      <label class="tog" for="hw">
+        <span class="t">Highways</span>
+        <span class="d" id="hwDesc">Autobahn &amp; Schnellstraße allowed</span>
+        <input type="checkbox" id="hw" role="switch"><span class="sw"></span>
+      </label>
+      <label class="tog" for="by">
+        <span class="t">Bystreets</span>
+        <span class="d" id="byDesc">Normal mix of roads</span>
+        <input type="checkbox" id="by" role="switch"><span class="sw"></span>
+      </label>
+    </div>
+    <div class="bymode" id="byModeRow" hidden>
+      <div class="seg" role="radiogroup" aria-label="How bystreets are planned">
+        <button role="radio" data-v="exact" id="byExact">Exact streets</button>
+        <button role="radio" data-v="areas" id="byAreas">Areas to explore</button>
+      </div>
+      <p class="tip" id="byModeTip"></p>
+    </div>
+    <div class="stops">
+      <ol class="stoplist" id="stopList"></ol>
+      <button class="addstop" id="addStopBtn" aria-expanded="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Add a stop the route must pass
+      </button>
+      <div class="addpanel" id="addPanel" hidden>
+        <div class="searchrow">
+          <input id="placeQ" type="search" placeholder="Search a place or address" autocomplete="off" aria-label="Search a place">
+          <button class="btn ghost sm" id="pickBtn" style="width:auto">Pick on map</button>
+        </div>
+        <ul class="results" id="placeResults"></ul>
+      </div>
+    </div>
+    <button class="btn" id="goBtn">Generate random route</button>
+    <p class="msg" id="msg">Finding your location…</p>
+  </div>
+
+  <!-- Result view -->
+  <div id="result" hidden>
+    <h2 id="resTitle">Your route</h2>
+    <div class="stats">
+      <div class="stat"><span class="label">Distance</span><b id="rKm">–</b></div>
+      <div class="stat"><span class="label">Time</span><b id="rTime">–</b></div>
+      <div class="stat"><span class="label">Turns</span><b id="rTurns">–</b></div>
+    </div>
+    <div class="pills" id="rPills"></div>
+    <div class="legend" aria-label="Line colour shows the order: blue at the start, orange at the end"><span>Start</span><i></i><span>End</span></div>
+    <div class="stack">
+      <button class="btn" id="navBtn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2 4.5 20.3l.7.7L12 18l6.8 3 .7-.7z"/></svg>
+        Start navigation
+      </button>
+      <p class="tip" id="navTip"></p>
+      <button class="btn ghost" id="homeBtn" hidden>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M3 11 12 3l9 8v10h-6v-6H9v6H3z"/></svg>
+        Navigate home
+      </button>
+      <div class="row2">
+        <button class="btn ghost sm" id="againBtn">New route</button>
+        <button class="btn ghost sm" id="gpxBtn">Save GPX</button>
+      </div>
+      <button class="btn ghost" id="backBtn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+        Change settings
+      </button>
+    </div>
+  </div>
+
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(() => {
+'use strict';
+const VALHALLA = 'https://valhalla1.openstreetmap.de/route';
+const $ = id => document.getElementById(id);
+const fmt = n => n.toLocaleString('de-AT', {maximumFractionDigits: 1});
+
+/* ---------- Storage ---------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+try { localStorage.removeItem('uf-log'); } catch {} // old km log from earlier versions
+const settings = store.get('uf-settings', {dist: 25, hw: false, by: false, loop: true, byMode: 'exact'});
+let byMode = settings.byMode === 'areas' ? 'areas' : 'exact';
+$('dist').value = settings.dist; $('hw').checked = settings.hw; $('by').checked = settings.by;
+$('loop').checked = settings.loop !== false;
+
+/* ---------- Map ---------- */
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+const map = L.map('map', {zoomControl: false, attributionControl: true}).setView([47.6, 14.1], 7); // Austria
+map.attributionControl.setPrefix(false);
+// Map credits (required by the OpenStreetMap licence) sit behind a small ⓘ button instead of a permanent bar.
+L.Control.AttrToggle = L.Control.extend({onAdd() {
+  const b = L.DomUtil.create('button', 'attrbtn');
+  b.textContent = 'i'; b.setAttribute('aria-label', 'Map credits'); b.title = 'Map credits';
+  L.DomEvent.disableClickPropagation(b);
+  b.onclick = () => document.body.classList.toggle('attr-open');
+  return b;
+}});
+new L.Control.AttrToggle({position: 'bottomright'}).addTo(map);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, className: dark ? 'tiles-dark' : '',
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · Routing <a href="https://valhalla.github.io/valhalla/">Valhalla</a>'
+}).addTo(map);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+let me = null, meMarker = null, accCircle = null, follow = true;
+let route = null, routeLayers = [];
+
+// How much of the lowered panel stays visible: the handle and the title, plus the phone's
+// home/gesture bar at the bottom (safe-area inset, at least 16 px).
+const insetProbe = Object.assign(document.createElement('div'), {style: 'position:fixed;left:0;bottom:0;width:0;height:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none'});
+document.body.append(insetProbe);
+function peekPx() {
+  const v = !$('result').hidden ? $('result') : $('setup'), h2 = v.querySelector('h2');
+  const top = h2 ? h2.getBoundingClientRect().bottom - $('sheet').getBoundingClientRect().top + 10 : 40;
+  const px = Math.round(top + Math.max(16, insetProbe.offsetHeight));
+  document.documentElement.style.setProperty('--peek', px + 'px');
+  return px;
+}
+function setSheetPad() {
+  document.documentElement.style.setProperty('--sheet-h', ($('sheet').classList.contains('collapsed') ? peekPx() : $('sheet').offsetHeight) + 'px');
+}
+new ResizeObserver(setSheetPad).observe($('sheet'));
+
+function updateMe(lat, lon, acc) {
+  me = {lat, lon};
+  if (!meMarker) {
+    meMarker = L.marker([lat, lon], {icon: L.divIcon({className: '', html: '<div class="me"></div>', iconSize: [18, 18]}), zIndexOffset: 1000}).addTo(map);
+    accCircle = L.circle([lat, lon], {radius: acc || 30, stroke: false, fillColor: css('--sign'), fillOpacity: .12}).addTo(map);
+  } else { meMarker.setLatLng([lat, lon]); accCircle.setLatLng([lat, lon]).setRadius(acc || 30); }
+  if (follow && !route) map.setView([lat, lon], Math.max(map.getZoom(), 14));
+}
+
+function startGeo() {
+  if (!('geolocation' in navigator)) { setMsg('This browser has no location access. Tap the map to set your start.', true); return; }
+  navigator.geolocation.watchPosition(
+    p => { if (!me) setMsg('Ready. Set your distance and go.'); updateMe(p.coords.latitude, p.coords.longitude, p.coords.accuracy); checkAreaWeather(); },
+    e => setMsg(e.code === 1 ? 'Location blocked. Allow it in your browser settings, or tap the map to set your start.' : 'Couldn\'t get your location yet. You can tap the map to set your start.', true),
+    {enableHighAccuracy: true, maximumAge: 10000, timeout: 20000}
+  );
+}
+map.on('click', e => {
+  if (picking) { addStopAt(e.latlng.lat, e.latlng.lng); stopPicking(); return; }
+  if (route) return;
+  follow = false; updateMe(e.latlng.lat, e.latlng.lng, 10); setMsg('Start set on the map.'); areaWxAt = 0; checkAreaWeather();
+});
+map.on('dragstart', () => { follow = false; });
+$('locBtn').onclick = () => { follow = true; if (me) map.setView([me.lat, me.lon], 15); else startGeo(); };
+
+/* ---------- Settings UI ---------- */
+function syncDesc() {
+  $('hwDesc').textContent = $('hw').checked ? 'Autobahn & Schnellstraße may be used' : 'Never uses Autobahn or Schnellstraße';
+  $('byDesc').textContent = $('by').checked ? 'Prefers tight residential streets' : 'Normal mix of roads';
+  $('byModeRow').hidden = !$('by').checked;
+  $('byExact').setAttribute('aria-checked', String(byMode === 'exact'));
+  $('byAreas').setAttribute('aria-checked', String(byMode === 'areas'));
+  $('byModeTip').textContent = byMode === 'exact'
+    ? 'The route itself goes through the side streets. Best followed with the GPX in OsmAnd.'
+    : 'Normal roads take you to a few residential areas; you pick the side streets there yourself. Easy to follow in Google Maps.';
+  setSheetPad();
+  const d = +$('dist').value || 25;
+  $('loopDesc').textContent = $('loop').checked ? 'Loops back to where you started'
+    : `Drives ${fmt(d)} km to a random place. Navi takes you home.`;
+  store.set('uf-settings', {dist: d, hw: $('hw').checked, by: $('by').checked, loop: $('loop').checked, byMode});
+}
+['hw', 'by', 'dist', 'loop'].forEach(id => $(id).addEventListener('change', syncDesc));
+['byExact', 'byAreas'].forEach(id => $(id).addEventListener('click', () => { byMode = $(id).dataset.v; syncDesc(); }));
+$('dist').addEventListener('input', syncDesc);
+$('chips').onclick = e => { const k = e.target.dataset && e.target.dataset.km; if (k) { $('dist').value = k; syncDesc(); } };
+syncDesc();
+
+function setMsg(t, err) { const m = $('msg'); m.textContent = t; m.classList.toggle('err', !!err); }
+function show(view) { ['setup', 'result'].forEach(v => { $(v).hidden = v !== view; }); setCollapsed(false); }
+// The panel can be hidden to see the map: click/tap the handle, or drag it down (and up again).
+function setCollapsed(c) {
+  $('sheet').classList.toggle('collapsed', c);
+  $('sheet').scrollTop = 0;
+  $('grab').setAttribute('aria-expanded', String(!c));
+  $('grab').setAttribute('aria-label', c ? 'Show panel' : 'Hide panel');
+  setSheetPad();
+}
+(() => {
+  const g = $('grab'), sh = $('sheet'); let y0 = null, moved = false, start = 0, max = 0, off = 0, lastY = 0, lastT = 0, vel = 0;
+  g.addEventListener('pointerdown', e => {
+    y0 = lastY = e.clientY; lastT = e.timeStamp; vel = 0; moved = false;
+    max = sh.offsetHeight - peekPx(); start = off = sh.classList.contains('collapsed') ? max : 0;
+    g.setPointerCapture(e.pointerId);
+  });
+  g.addEventListener('pointermove', e => {
+    if (y0 === null) return;
+    const dy = e.clientY - y0;
+    if (!moved && Math.abs(dy) > 5) { moved = true; sh.classList.add('dragging'); sh.classList.remove('collapsed'); }
+    if (!moved) return;
+    off = Math.min(max, Math.max(0, start + dy));
+    sh.style.transform = `translateY(${off}px)`;
+    if (e.timeStamp > lastT) vel = (e.clientY - lastY) / (e.timeStamp - lastT);
+    lastY = e.clientY; lastT = e.timeStamp;
+  });
+  const end = () => {
+    if (y0 === null) return;
+    y0 = null;
+    if (!moved) { setCollapsed(!sh.classList.contains('collapsed')); return; }
+    sh.classList.remove('dragging'); sh.style.transform = '';
+    // A quick flick decides; otherwise whichever side of halfway you let go on.
+    setCollapsed(Math.abs(vel) > .5 ? vel > 0 : off > max / 2);
+  };
+  g.addEventListener('pointerup', end);
+  g.addEventListener('pointercancel', end);
+  g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setCollapsed(!$('sheet').classList.contains('collapsed')); } });
+})();
+
+/* ---------- Stops the route must pass ---------- */
+const MAX_STOPS = 8; // routing server limit: start + 8 + finish
+const PHOTON = 'https://photon.komoot.io';
+let stops = [], stopLayers = [], picking = false;
+
+function placeLabel(p) {
+  const name = p.name || [p.street, p.housenumber].filter(Boolean).join(' ') || p.city || 'Dropped pin';
+  const sub = [p.name && p.street ? [p.street, p.housenumber].filter(Boolean).join(' ') : '', p.postcode, p.city || p.town || p.village, p.state]
+    .filter((x, i, a) => x && a.indexOf(x) === i && x !== name).join(', ');
+  return {name, sub};
+}
+function renderStops() {
+  $('stopList').innerHTML = stops.map((s, i) => `<li><span class="n">${i + 1}</span><span class="nm">${esc(s.name)}${s.sub ? `<small>${esc(s.sub)}</small>` : ''}</span><button data-i="${i}" aria-label="Remove stop ${i + 1}">×</button></li>`).join('');
+  const full = stops.length >= MAX_STOPS;
+  $('addStopBtn').hidden = full;
+  if (full) closeAdd();
+  drawStopMarkers();
+  setSheetPad();
+}
+function drawStopMarkers() {
+  stopLayers.forEach(l => map.removeLayer(l));
+  stopLayers = stops.map((s, i) => L.marker([s.lat, s.lon], {zIndexOffset: 900,
+    icon: L.divIcon({className: '', html: `<div class="startpin stop">${i + 1}</div>`, iconSize: [22, 22]})}).addTo(map));
+}
+function addStop(s) {
+  if (stops.length >= MAX_STOPS) return;
+  stops.push(s); renderStops();
+  setMsg(`Stop ${stops.length} added. The route will pass it.`);
+}
+async function addStopAt(lat, lon) {
+  const s = {lat, lon, name: 'Dropped pin', sub: `${lat.toFixed(5)}, ${lon.toFixed(5)}`};
+  addStop(s);
+  try { // name it after the nearest address
+    const j = await fetch(`${PHOTON}/reverse?lat=${lat}&lon=${lon}&lang=de`).then(r => r.json());
+    const f = j.features && j.features[0];
+    // Prefer the street address over whatever shop or POI happens to be nearest.
+    if (f) { const p = f.properties; Object.assign(s, placeLabel(p.street ? {...p, name: undefined} : p)); renderStops(); }
+  } catch {}
+}
+$('stopList').onclick = e => {
+  const i = e.target.dataset && e.target.dataset.i; if (i === undefined) return;
+  stops.splice(+i, 1); renderStops();
+};
+function closeAdd() { $('addPanel').hidden = true; $('addStopBtn').setAttribute('aria-expanded', 'false'); $('placeQ').value = ''; $('placeResults').innerHTML = ''; setSheetPad(); }
+$('addStopBtn').onclick = () => {
+  const open = $('addPanel').hidden;
+  if (!open) { closeAdd(); return; }
+  $('addPanel').hidden = false; $('addStopBtn').setAttribute('aria-expanded', 'true'); setSheetPad();
+  $('placeQ').focus();
+};
+let searchTimer, searchSeq = 0;
+$('placeQ').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = $('placeQ').value.trim();
+  if (q.length < 3) { $('placeResults').innerHTML = ''; setSheetPad(); return; }
+  searchTimer = setTimeout(async () => {
+    const seq = ++searchSeq, c = me || map.getCenter() && {lat: map.getCenter().lat, lon: map.getCenter().lng};
+    try {
+      const j = await fetch(`${PHOTON}/api/?q=${encodeURIComponent(q)}&limit=6&lang=de&lat=${c.lat}&lon=${c.lon}`).then(r => r.json());
+      if (seq !== searchSeq) return;
+      const feats = (j.features || []);
+      $('placeResults').innerHTML = feats.length ? feats.map((f, i) => {
+        const l = placeLabel(f.properties);
+        return `<li data-i="${i}" tabindex="0">${esc(l.name)}${l.sub ? `<small>${esc(l.sub)}</small>` : ''}</li>`;
+      }).join('') : '<li class="note">No places found. Try another name, or pick on the map.</li>';
+      $('placeResults').onclick = $('placeResults').onkeydown = ev => {
+        if (ev.type === 'keydown' && ev.key !== 'Enter') return;
+        const li = ev.target.closest('li[data-i]'); if (!li) return;
+        const f = feats[+li.dataset.i], [lon, lat] = f.geometry.coordinates;
+        addStop({lat, lon, ...placeLabel(f.properties)});
+        closeAdd();
+        map.panTo([lat, lon]);
+      };
+    } catch { if (seq === searchSeq) $('placeResults').innerHTML = '<li class="note">Search isn\'t reachable right now. Pick on the map instead.</li>'; }
+    setSheetPad();
+  }, 350);
+});
+function startPicking() { picking = true; document.body.classList.add('picking'); $('pickBar').hidden = false; $('map').style.cursor = 'crosshair'; }
+function stopPicking() { picking = false; document.body.classList.remove('picking'); $('pickBar').hidden = true; $('map').style.cursor = ''; closeAdd(); }
+$('pickBtn').onclick = startPicking;
+$('pickCancel').onclick = stopPicking;
+
+/* ---------- Geo helpers ---------- */
+const R = 6371, rad = d => d * Math.PI / 180, deg = r => r * 180 / Math.PI;
+function dest(p, bearingDeg, km) {
+  const b = rad(bearingDeg), d = km / R, la = rad(p.lat), lo = rad(p.lon);
+  const la2 = Math.asin(Math.sin(la) * Math.cos(d) + Math.cos(la) * Math.sin(d) * Math.cos(b));
+  const lo2 = lo + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(la), Math.cos(d) - Math.sin(la) * Math.sin(la2));
+  return {lat: deg(la2), lon: deg(lo2)};
+}
+function hav(a, b) {
+  const dla = rad(b[0] - a[0]), dlo = rad(b[1] - a[1]);
+  const h = Math.sin(dla / 2) ** 2 + Math.cos(rad(a[0])) * Math.cos(rad(b[0])) * Math.sin(dlo / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function decode(str, precision = 6) {
+  let i = 0, lat = 0, lon = 0, out = [], f = Math.pow(10, precision);
+  while (i < str.length) {
+    for (const k of [0, 1]) {
+      let b, shift = 0, res = 0;
+      do { b = str.charCodeAt(i++) - 63; res |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      const d = (res & 1) ? ~(res >> 1) : (res >> 1);
+      if (k === 0) lat += d; else lon += d;
+    }
+    out.push([lat / f, lon / f]);
+  }
+  return out;
+}
+// Share of the route that drives the same road twice (out-and-back spurs)
+function overlap(shape) {
+  const seen = new Map(); let dup = 0, tot = 0;
+  for (let i = 1; i < shape.length; i++) {
+    const a = shape[i - 1], b = shape[i], len = hav(a, b);
+    const ka = a[0].toFixed(4) + ',' + a[1].toFixed(4), kb = b[0].toFixed(4) + ',' + b[1].toFixed(4);
+    const key = ka < kb ? ka + '|' + kb : kb + '|' + ka;
+    if (ka === kb) continue;
+    if (seen.has(key)) dup += len; else seen.set(key, 1);
+    tot += len;
+  }
+  return tot ? dup / tot : 0;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ---------- Route generation ---------- */
+function bearing(a, b) {
+  const la1 = rad(a.lat), la2 = rad(b.lat), dl = rad(b.lon - a.lon);
+  return (deg(Math.atan2(Math.sin(dl) * Math.cos(la2), Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dl))) + 360) % 360;
+}
+function makeShape(hw, by, D, oneway, origin, exact = false) {
+  // The routing server allows max 10 locations: start + 8 stops + finish, shared with your own stops.
+  const k = stops.length, room = (exact ? 20 : MAX_STOPS) - k; // BRouter (exact bystreets) takes many stops
+  // With your own stops, head roughly towards them so the route doesn't zig-zag.
+  // Head out in a different direction than the last two routes (differences under 60° get re-rolled).
+  const recentDirs = store.get('uf-recent-dirs', []).slice(-2);
+  let b0 = Math.random() * 360;
+  for (let t = 0; t < 12 && recentDirs.some(d => Math.abs(((b0 - d + 540) % 360) - 180) < 60); t++) b0 = Math.random() * 360;
+  if (k) {
+    const cen = {lat: stops.reduce((s, p) => s + p.lat, 0) / k, lon: stops.reduce((s, p) => s + p.lon, 0) / k};
+    if (hav([origin.lat, origin.lon], [cen.lat, cen.lon]) > .2) b0 = (bearing(origin, cen) + (Math.random() - .5) * 80 + 360) % 360;
+  }
+  const dir = Math.random() < .5 ? 1 : -1, pts = [];
+  if (oneway) {
+    // Stops wander along a random heading towards a random destination.
+    const n = Math.min(room, exact ? Math.min(16, Math.max(2, Math.round(D / 5))) : by ? Math.min(5, Math.max(2, Math.round(D / 6)))
+            : hw ? Math.min(2, Math.max(1, Math.round(D / 30)))
+            : Math.min(4, Math.max(1, Math.round(D / 10))));
+    for (let i = 1; i <= n; i++) pts.push({t: (i - .3 + Math.random() * .6) / (n + 1), off: (Math.random() - .5) * .5});
+    return {b0, dir, pts, oneway};
+  }
+  // Loop: stops sit on a wobbly circle that passes through the start.
+  const n = Math.min(room, exact ? Math.min(18, Math.max(3, Math.round(D / 5))) : by ? Math.min(6, Math.max(3, Math.round(D / 6)))
+          : hw ? Math.min(4, Math.max(2, Math.round(D / 25) + 2))
+          : Math.min(6, Math.max(3, Math.round(D / 10) + 2)));
+  const step = 360 / (n + 1);
+  for (let i = 1; i <= n; i++) pts.push({a: step * i + (Math.random() - .5) * step * .7, k: .7 + Math.random() * .6});
+  return {b0, dir, pts};
+}
+// r = circle radius (loop) or straight-line distance to the destination (one way), in km.
+// Your own stops are slotted in between the random ones in driving order.
+function waypoints(origin, shape, r) {
+  if (shape.oneway) {
+    const rand = shape.pts.map(p => ({...dest(dest(origin, shape.b0, r * p.t), shape.b0 + 90, r * p.off), key: p.t}));
+    const mine = stops.map(s => {
+      const d = hav([origin.lat, origin.lon], [s.lat, s.lon]), ang = rad(bearing(origin, s) - shape.b0);
+      return {lat: s.lat, lon: s.lon, user: true, key: d * Math.cos(ang) / r};
+    });
+    const wps = [...rand, ...mine].sort((a, b) => a.key - b.key);
+    // Destination: random, but never before your furthest stop.
+    const far = Math.max(1, ...mine.map(m => m.key + .15));
+    return {wps, end: dest(origin, shape.b0, r * far)};
+  }
+  const c = dest(origin, shape.b0, r), base = shape.b0 + 180;
+  const rand = shape.pts.map(p => ({...dest(c, base + shape.dir * p.a, r * p.k), key: p.a}));
+  const mine = stops.map(s => ({lat: s.lat, lon: s.lon, user: true, key: ((shape.dir * (bearing(c, s) - base)) % 360 + 360) % 360}));
+  return {wps: [...rand, ...mine].sort((a, b) => a.key - b.key), end: origin};
+}
+async function valhalla(origin, wps, hw, by, wpType = 'through', snap = true, end = origin) {
+  const filter = by ? {min_road_class: 'residential', max_road_class: 'unclassified'}
+               : !hw ? {min_road_class: 'residential', max_road_class: 'primary', exclude_ramp: true}
+               : {min_road_class: 'residential', exclude_ramp: true};
+  const auto = {
+    use_highways: hw ? (by ? .3 : .5 + Math.random() * .5) : 0,
+    use_tolls: hw ? .5 : 0,
+    use_living_streets: by ? .5 : .2,
+    use_tracks: 0,
+    service_penalty: 300, service_factor: 6 // keep off access lanes, parking lots, allotment paths
+  };
+  // Snap the start to a real street, not a driveway, private road or pedestrian zone next to you.
+  const startFilter = hw ? {min_road_class: 'residential', exclude_ramp: true}
+                         : {min_road_class: 'residential', max_road_class: 'primary', exclude_ramp: true};
+  if (snap) wps = (await snapPublic(wps, filter)).filter(Boolean);
+  const body = {
+    locations: [{lat: origin.lat, lon: origin.lon, type: 'break', search_filter: startFilter},
+      // snap=false: points already lie on a road (refine step), so take the road they're on.
+      // Your own stops: nearest drivable road, driven through without turning around on the spot.
+      // Only if that's impossible (a dead end) does the 'via' retry allow a turnaround there.
+      ...wps.map(p => p.user ? {lat: p.lat, lon: p.lon, type: wpType}
+        : snap ? {lat: p.lat, lon: p.lon, type: wpType, search_filter: filter} : {lat: p.lat, lon: p.lon, type: wpType, radius: 15}),
+      end === origin ? {lat: origin.lat, lon: origin.lon, type: 'break', search_filter: startFilter}
+        : snap ? {lat: end.lat, lon: end.lon, type: 'break', search_filter: by ? filter : startFilter}
+        : {lat: end.lat, lon: end.lon, type: 'break', radius: 15}],
+    costing: 'auto', costing_options: {auto},
+    directions_options: {units: 'kilometers', language: 'en-US'}
+  };
+  if (avoidAreas.length) body.exclude_polygons = avoidAreas.map(a => circleRing(a, a.r)); // icy spots
+  return finishTrip((await vpost('route', body)).trip);
+}
+// The free routing server allows about one request per second: wait only as long as needed.
+let lastV = 0;
+async function vpost(path, body) {
+  const w = lastV + 1050 - Date.now(); if (w > 0) await sleep(w);
+  lastV = Date.now();
+  const res = await fetch(VALHALLA.replace('/route', '/' + path), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || j.error || (/route$/.test(path) && !j.trip)) { const e = new Error(j.error || ('HTTP ' + res.status)); e.status = res.status; throw e; }
+  return j;
+}
+// Shared clean-up for every route, whichever router found it.
+function finishTrip(t) {
+  const shape = [], man = [];
+  t.legs.forEach(l => {
+    const off = shape.length;
+    shape.push(...decode(l.shape));
+    l.maneuvers.forEach(m => man.push({...m, begin_shape_index: m.begin_shape_index + off}));
+  });
+  // Drop dead-end detours (drive in, turn around, drive back out) and fix distance/time/turns to match.
+  const clean = removeSpurs(shape, Math.min(6, pathKm(shape) * .3));
+  const keep = man.filter(m => !clean.cuts.some(([a, b]) => m.begin_shape_index >= a && m.begin_shape_index < b));
+  const km = pathKm(clean.shape), sec = t.summary.time * (km / t.summary.length || 1);
+  return {km, sec, highway: t.summary.has_highway, toll: t.summary.has_toll, ferry: t.summary.has_ferry,
+    shape: clean.shape, man: keep, spurFrac: Math.max(0, 1 - km / pathKm(shape)),
+    uturns: keep.filter(m => m.type === 12 || m.type === 13).length}; // U-turns left after cleanup
+}
+
+// The routing server's own times assume heavy traffic (≈22 km/h in town, ≈32 km/h on country roads).
+// Re-time the final path from each road's speed limit instead, with realistic slow-downs.
+function encode(pts, f = 1e6) {
+  let o = '', pa = 0, pb = 0;
+  const e = v => { v = v < 0 ? ~(v << 1) : v << 1; let s = ''; while (v >= 0x20) { s += String.fromCharCode((0x20 | (v & 0x1f)) + 63); v >>= 5; } return s + String.fromCharCode(v + 63); };
+  for (const [a, b] of pts) { const la = Math.round(a * f), lo = Math.round(b * f); o += e(la - pa) + e(lo - pb); pa = la; pb = lo; }
+  return o;
+}
+const DEFAULT_LIMIT = {motorway: 130, trunk: 100, primary: 90, secondary: 80, tertiary: 70, unclassified: 60, residential: 30, service_other: 15};
+async function driveTimeSec(rt) {
+  const j = await vpost('trace_attributes', {encoded_polyline: encode(rt.shape), shape_match: 'map_snap', costing: 'auto',
+    filters: {attributes: ['edge.length', 'edge.speed_limit', 'edge.road_class', 'edge.use', 'edge.curvature', 'node.traffic_signal'], action: 'include'}});
+  if (!j.edges || !j.edges.length) throw new Error('no attributes');
+  let t = 0;
+  for (const e of j.edges) {
+    let lim = e.speed_limit; if (!lim || lim >= 200) lim = DEFAULT_LIMIT[e.road_class] || 40;
+    if (e.use === 'living_street') lim = Math.min(lim, 15);
+    let v = lim * (lim >= 100 ? .82 : lim >= 70 ? .85 : lim >= 50 ? .8 : .75);
+    if ((e.curvature || 0) >= 10) v = Math.min(v, 60);
+    if ((e.curvature || 0) >= 13) v = Math.min(v, 45);
+    t += e.length / v * 3600;
+    if (e.end_node && e.end_node.traffic_signal) t += 15;
+  }
+  return t + rt.man.length * 5; // a few seconds per turn
+}
+
+/* ---------- Explore areas: put them where residential streets really are ----------
+   For each planned area, try the spot and 4 nearby alternatives (~800 m away). Each is scored by a 3×3
+   grid (250 m apart): how many grid points have a residential street within 120 m. The best one wins;
+   an area scoring under 5 of 9 is a field or a lone crossroads, so it gets no circle. */
+async function pickZones(wps) {
+  const GRID = [-1, 0, 1], cand = [], locs = [];
+  wps.forEach((w, wi) => {
+    if (w.user) return;
+    const opts = [w, ...[0, 1, 2, 3].map(k => dest(w, k * 90 + Math.random() * 60, .6 + Math.random() * .4))];
+    opts.forEach(c => {
+      const dLat = .00225, dLon = .00225 / Math.cos(rad(c.lat));
+      cand.push({wi, c, from: locs.length});
+      for (const dx of GRID) for (const dy of GRID)
+        locs.push({lat: c.lat + dy * dLat, lon: c.lon + dx * dLon, search_filter: {min_road_class: 'residential', max_road_class: 'residential'}});
+    });
+  });
+  if (!locs.length) return wps;
+  let res;
+  try { res = await vpost('locate', {costing: 'auto', locations: locs}); } catch { return wps; }
+  const score = c => {
+    let n = 0;
+    for (let k = 0; k < 9; k++) {
+      const e = res[c.from + k] && res[c.from + k].edges && res[c.from + k].edges[0];
+      if (e && hav([locs[c.from + k].lat, locs[c.from + k].lon], [e.correlated_lat, e.correlated_lon]) < .12) n++;
+    }
+    return n;
+  };
+  return wps.map((w, wi) => {
+    if (w.user) return w;
+    const mine = cand.filter(c => c.wi === wi).map(c => ({...c, s: score(c)}));
+    const best = mine.reduce((a, b) => b.s > a.s ? b : a);
+    return best.s >= 5 ? {...w, lat: best.c.lat, lon: best.c.lon, zone: true} : w;
+  });
+}
+
+/* ---------- Only stop on roads you may drive on ----------
+   Random stops get moved onto the nearest road that is open to cars, not private or "destination only"
+   (military areas, allotments, company grounds), and connected to the rest of the network (reach ≥ 50
+   in both directions). Stops with no such road nearby are dropped. Your own stops are kept as they are. */
+async function snapPublic(pts, filter) {
+  if (!pts.some(p => !p.user)) return pts;
+  let loc;
+  try { loc = await vpost('locate', {verbose: true, costing: 'auto', locations: pts.map(p => ({lat: p.lat, lon: p.lon, search_filter: p.user ? undefined : filter}))}); }
+  catch { return pts; }
+  return pts.map((p, i) => {
+    if (p.user) return p;
+    const e = ((loc[i] && loc[i].edges) || []).find(publicEdge);
+    return e ? {...p, lat: e.correlated_lat, lon: e.correlated_lon} : null;
+  });
+}
+function publicEdge(x) {
+  return x.edge && !x.edge.destination_only && !(x.edge.access && x.edge.access.car === false) &&
+    (x.inbound_reach == null || x.inbound_reach >= 50) && (x.outbound_reach == null || x.outbound_reach >= 50);
+}
+
+/* ---------- Bystreets: BRouter with a "prefer small streets" car profile ----------
+   The main router can't be told to prefer small roads, so with Bystreets on the path comes from
+   BRouter, whose profile adds a cost per metre on bigger roads (primary 30, secondary 22, busy
+   tertiary 14, quiet village tertiary 6, unclassified 2, service 10, residential 0), plus extra for
+   anything that isn't tight and quiet: marked 2+ lanes 4, sidewalks both sides 2, estimated traffic
+   (3: 2, 4: 5, 5+: 10), dense city (town class 4: 1.5, 5+: 3), dead ends 8.
+   The main router then turns that exact path into turn-by-turn directions. */
+const BROUTER = 'https://brouter.de/brouter';
+const BR_PROFILE = `---model:btools.router.KinematicModel
+---context:global
+assign validForCars        = true
+assign avoid_toll          = false  # %avoid_toll% | Avoid paid roads | boolean
+assign avoid_unpaved       = false  # %avoid_unpaved% | Avoid unpaved roads, if possible | boolean
+assign avoid_motorways     = __AVOID__  # %avoid_motorways% | Avoid motorways | boolean
+assign add_beeline         = false  # %add_beeline% | Enable beeline on distant start/end points | boolean
+assign use_offroad         = false  # %use_offroad% | Enable additional roads | boolean
+assign consider_river      = false  # %consider_river% | Activate to prefer a route along rivers, lakes, etc. | boolean
+assign consider_forest     = false  # %consider_forest% | Activate to prefer a route in forest or parks | boolean
+assign consider_town       = false  # %consider_town% | Activate to bypass cities / big towns as far as possible | boolean
+assign vmax = 160 # %vmax% | Target speed (in km/h) | number
+assign recup_efficiency = 0.7    # %recup_efficiency% | (ratio) | number
+assign totalweight      = 1640   # %totalweight% | Total weight of the car (in kg) | number
+assign f_roll           = 232    # %f_roll% | Rolling friction (in Newton) | number
+assign f_air            = 0.4    # %f_air% | Drag force (in Newton / (m/s)^2), 0.5*cw*A*rho | number
+assign f_recup          = 400    # %f_recup% | Newton | number
+assign p_standby        = 250    # %p_standby% | Watt | number
+assign turnInstructionMode          = 1     # %turnInstructionMode% | Mode for the generated turn instructions | [0=none, 1=auto-choose, 2=locus-style, 3=osmand-style, 4=comment-style, 5=gpsies-style, 6=orux-style, 7=locus-old-style]
+assign pass1coefficient    = 1.3
+---context:way   # following code refers to way-tags
+assign classifier_none        = 1
+assign classifier_ferry       = 2
+assign is_avoided_toll_road and  avoid_toll toll=yes
+assign is_avoided_motorway and avoid_motorways highway=motorway|motorway_link
+assign isresidentialorliving = or highway=residential|living_street living_street=yes
+assign caraccess
+       switch motorcar=
+              switch motor_vehicle=
+                     switch vehicle=
+                            switch access=
+                                   switch highway=motorway|motorway_link       1
+                                   switch highway=trunk|trunk_link             1
+                                   switch highway=primary|primary_link         1
+                                   switch highway=secondary|secondary_link     1
+                                   switch highway=tertiary|tertiary_link       1
+                                   switch highway=unclassified                 1
+                                   switch and highway=track use_offroad        1
+                                   switch and highway=road use_offroad         1
+                                   switch route=ferry                          1
+                                   switch isresidentialorliving                1
+                                   switch highway=service                      1
+                                   0
+                                   access=yes|permissive|designated|destination
+                            vehicle=yes|designated|destination
+                     motor_vehicle=yes|permissive|designated|destination
+              motorcar=yes|permissive|designated|destination
+assign caraccess_destination
+       switch motorcar=
+              switch motor_vehicle=
+                     switch vehicle=
+                            access=destination
+                            vehicle=destination
+                     motor_vehicle=destination
+              motorcar=destination
+assign initialclassifier =
+     if route=ferry then classifier_ferry
+     else classifier_none
+assign initialcost =
+     if      ( and highway= not route=ferry ) then 10000
+     else if ( equal initialclassifier classifier_ferry ) then 10000
+     else 0
+assign accessspeedlimit = if caraccess then 999 else 0
+assign isbadoneway = if reversedirection=yes then ( if oneway= then junction=roundabout else oneway=yes|true|1 ) else oneway=-1
+assign onewayspeedlimit = if isbadoneway then 0 else 999
+assign islinktype = highway=motorway_link|trunk_link|primary_link|secondary_link|tertiary_link
+assign maxspeed_surface =
+  switch or surface= surface=paved|asphalt|concrete 999
+  switch surface=paving_stones|cobblestone|sett 30
+  switch surface=fine_gravel ( switch avoid_unpaved 3 10 )
+  switch avoid_unpaved 1 2
+assign maxspeed_tracktype =
+  switch tracktype= 999
+  switch tracktype=grade1 40
+  switch tracktype=grade2 ( switch avoid_unpaved 2 5 )
+  1
+assign maxspeed_implicit =
+  switch highway=motorway                  999
+  switch highway=motorway_link             130
+  switch highway=trunk                     250
+  switch highway=trunk_link                100
+  switch highway=primary|primary_link      100
+  switch highway=secondary|secondary_link   90
+  switch highway=tertiary|tertiary_link     80
+  switch highway=unclassified               50
+  switch route=ferry                        10
+  switch highway=bridleway                  10
+  switch isresidentialorliving              30
+  switch highway=service                    30
+  switch highway=track|road|path switch tracktype=grade1 30 5
+  0
+assign maxspeed_forward =
+  switch maxspeed:forward=50 50
+  switch maxspeed:forward=30 30
+  switch maxspeed:forward=10 10
+  switch maxspeed:forward=20 20
+  switch maxspeed:forward=40 40
+  switch maxspeed:forward=60 60
+  switch maxspeed:forward=70 70
+  switch maxspeed:forward=80 80
+  switch maxspeed:forward=90 90
+  switch maxspeed:forward=100 100
+  switch maxspeed:forward=110 110
+  switch maxspeed:forward=120 120
+  switch maxspeed:forward=130 130
+  switch maxspeed:forward=urban 50
+  switch maxspeed:forward=rural 100
+  999
+assign maxspeed_backward =
+  switch maxspeed:backward=50 50
+  switch maxspeed:backward=30 30
+  switch maxspeed:backward=10 10
+  switch maxspeed:backward=20 20
+  switch maxspeed:backward=40 40
+  switch maxspeed:backward=60 60
+  switch maxspeed:backward=70 70
+  switch maxspeed:backward=80 80
+  switch maxspeed:backward=90 90
+  switch maxspeed:backward=100 100
+  switch maxspeed:backward=110 110
+  switch maxspeed:backward=120 120
+  switch maxspeed:backward=130 130
+  switch maxspeed:backward=urban 50
+  switch maxspeed:backward=rural 100
+  999
+assign maxspeed_explicit =
+  switch maxspeed=50 50
+  switch maxspeed=30 30
+  switch maxspeed=10 10
+  switch maxspeed=20 20
+  switch maxspeed=40 40
+  switch maxspeed=60 60
+  switch maxspeed=70 70
+  switch maxspeed=80 80
+  switch maxspeed=90 90
+  switch maxspeed=100 100
+  switch maxspeed=110 110
+  switch maxspeed=120 120
+  switch maxspeed=130 130
+  switch maxspeed=urban 50
+  switch maxspeed=rural 100
+  if reversedirection=yes then maxspeed_backward else maxspeed_forward
+assign maxspeed =
+  min onewayspeedlimit
+  min accessspeedlimit
+  min maxspeed_explicit
+  min maxspeed_implicit
+  min maxspeed_surface maxspeed_tracktype
+assign no_river_penalty
+   switch consider_river
+     switch estimated_river_class=  10
+     switch estimated_river_class=1  1.3
+     switch estimated_river_class=2  1
+     switch estimated_river_class=3  0.7
+     switch estimated_river_class=4  0.4
+     switch estimated_river_class=5  0.1
+     switch estimated_river_class=6  0 99 0
+assign no_forest_penalty
+   switch consider_forest
+     switch estimated_forest_class=  10
+     switch estimated_forest_class=1  0.5
+     switch estimated_forest_class=2  0.4
+     switch estimated_forest_class=3  0.25
+     switch estimated_forest_class=4  0.15
+     switch estimated_forest_class=5  0.1
+     switch estimated_forest_class=6  0 99 0
+assign town_penalty
+   switch consider_town
+     switch estimated_town_class=  0
+     switch estimated_town_class=1  5
+     switch estimated_town_class=2  9
+     switch estimated_town_class=3  12
+     switch estimated_town_class=4  13
+     switch estimated_town_class=5  14
+     switch estimated_town_class=6  16 99 0
+assign classpenalty =
+  switch highway=motorway|motorway_link|trunk|trunk_link 40
+  switch highway=primary|primary_link 30
+  switch highway=secondary|secondary_link 22
+  switch highway=tertiary|tertiary_link switch estimated_traffic_class=1|2 6 14
+  switch highway=unclassified 2
+  switch highway=service switch service=parking_aisle|driveway|drive-through|emergency_access 10000 60
+  0
+assign tightpenalty =
+  add switch lanes=2|3|4|5|6 4 0
+  add switch sidewalk=both 2 0
+  add switch estimated_traffic_class=5|6|7 10 switch estimated_traffic_class=4 5 switch estimated_traffic_class=3 2 0
+  add switch estimated_town_class=5|6 3 switch estimated_town_class=4 1.5 0
+  switch noexit=yes 8 0
+assign costfactor =
+  if ( equal maxspeed 0 ) then 10000
+  else if is_avoided_toll_road then 10000
+  else if is_avoided_motorway then 10000
+  else min 9999
+  add classpenalty
+  add tightpenalty
+  add town_penalty
+  add no_forest_penalty
+  add no_river_penalty
+  0
+assign minspeed =
+    switch highway=motorway|motorway_link|trunk  75 0
+assign priorityclassifier =
+  if      ( highway=motorway                  ) then  30
+  else if ( highway=motorway_link             ) then  29
+  else if ( highway=trunk                     ) then  28
+  else if ( highway=trunk_link                ) then  27
+  else if ( highway=primary                   ) then  26
+  else if ( highway=primary_link              ) then  25
+  else if ( highway=secondary                 ) then  24
+  else if ( highway=secondary_link            ) then  23
+  else if ( highway=tertiary                  ) then  22
+  else if ( highway=tertiary_link             ) then  21
+  else if ( highway=unclassified              ) then  20
+  else if ( isresidentialorliving             ) then  6
+  else if ( highway=service                   ) then  6
+  else if ( highway=track                     ) then if tracktype=grade1 then 4 else 2
+  else if ( highway=bridleway|road            ) then  2
+  else 0
+assign isgoodoneway = if reversedirection=yes then oneway=-1
+                      else if oneway= then junction=roundabout else oneway=yes|true|1
+assign isroundabout = junction=roundabout
+assign isgoodforcars = if greater priorityclassifier 6 then true
+                  else if or isresidentialorliving highway=service then true
+                  else if ( and highway=track tracktype=grade1 ) then true
+                  else false
+assign classifiermask add          isbadoneway
+                      add multiply isgoodoneway   2
+                      add multiply isroundabout   4
+                      add multiply islinktype     8
+                      add multiply isgoodforcars 16
+                      add multiply isresidentialorliving 32
+                          multiply caraccess_destination 64
+---context:node  # following code refers to node tags
+assign caraccess
+       switch motorcar=
+              switch motor_vehicle=
+                     switch vehicle=
+                            switch access=
+                                   not barrier=gate|bollard|lift_gate|cycle_barrier
+                                   access=yes|permissive|designated|destination
+                            vehicle=yes|permissive|designated|destination
+                     motor_vehicle=yes|permissive|designated|destination
+              motorcar=yes|permissive|designated|destination
+assign initialcost =
+       switch and avoid_toll barrier=toll_booth 1000000
+       switch caraccess
+              0
+              1000000
+assign maxspeed =
+       if or crossing=traffic_signals highway=traffic_signals
+       then
+         switch greater way:priorityclassifier 24 5
+         switch greater way:priorityclassifier 22 3
+         switch greater way:priorityclassifier 20 1
+         0
+       else if railway=level_crossing then 0
+       else 999`;
+const brIds = {};
+async function brProfile(hw) {
+  const k = hw ? 'hw' : 'nohw';
+  if (!brIds[k]) {
+    const r = await fetch(BROUTER + '/profile', {method: 'POST', headers: {'Content-Type': 'text/plain'}, body: BR_PROFILE.replace('__AVOID__', hw ? 'false' : 'true')});
+    const j = await r.json();
+    if (!j.profileid) throw new Error('Bystreet router unavailable');
+    brIds[k] = j.profileid;
+  }
+  return brIds[k];
+}
+async function brouter(origin, wps, hw, by, wpType, snap = true, end = origin) {
+  let pts = [origin, ...wps, end];
+  if (snap) {
+    // Put every point on a street first: from a field or a lake BRouter searches until it times out.
+    const startF = {min_road_class: 'residential', max_road_class: hw ? 'motorway' : 'primary', exclude_ramp: true};
+    const smallF = {min_road_class: 'residential', max_road_class: 'unclassified'};
+    const last = pts.length - 1, isEnd = i => i === 0 || i === last;
+    const loc = await vpost('locate', {verbose: true, costing: 'auto', locations: pts.map((p, i) => ({lat: p.lat, lon: p.lon,
+      search_filter: i === 0 || (i === last && end === origin) ? startF : (i > 0 && i < last && wps[i - 1].user) ? undefined : smallF}))});
+    pts = pts.map((p, i) => {
+      const es = (loc[i] && loc[i].edges) || [];
+      if (isEnd(i) || wps[i - 1].user) { const e = es[0]; return e ? {lat: e.correlated_lat, lon: e.correlated_lon, user: !isEnd(i)} : {...p, user: !isEnd(i)}; }
+      const e = es.find(publicEdge); // random stops: only public, connected roads; otherwise dropped
+      return e ? {lat: e.correlated_lat, lon: e.correlated_lon} : null;
+    }).filter(Boolean);
+  }
+  let txt = '';
+  const fixed = new Set(pts.map((p, i) => i === 0 || i === pts.length - 1 || p.user ? i : -1)); // start, end and your own stops never get dropped
+  for (let tryNo = 0; tryNo < 5; tryNo++) {
+    const id = await brProfile(hw);
+    const q = pts.map(p => p.lon.toFixed(6) + ',' + p.lat.toFixed(6)).join('|');
+    const nogo = avoidAreas.length ? '&nogos=' + avoidAreas.map(a => `${a.lon.toFixed(5)},${a.lat.toFixed(5)},${Math.round(a.r * 1000)}`).join('|') : '';
+    txt = await (await fetch(`${BROUTER}?lonlats=${q}&profile=${id}&alternativeidx=0&format=geojson${nogo}`)).text();
+    if (txt.trim().startsWith('{')) break;
+    if (/profile/i.test(txt)) { delete brIds[hw ? 'hw' : 'nohw']; continue; } // uploaded profile expired: upload again
+    if (/retry later/i.test(txt)) { await sleep(2500); continue; }             // busy server
+    // A random stop got attached to a path cars can't use ("island"): drop that stop and try again.
+    const m = txt.match(/(target|start) island detected for section (\d+)/);
+    if (m) {
+      const k = +m[2] + (m[1] === 'target' ? 1 : 0);
+      if (!fixed.has(k) && k > 0 && k < pts.length - 1) {
+        pts.splice(k, 1);
+        const shifted = [...fixed].map(f => f > k ? f - 1 : f); fixed.clear(); shifted.forEach(f => fixed.add(f));
+        continue;
+      }
+    }
+    break;
+  }
+  if (!txt.trim().startsWith('{')) throw new Error('Bystreet router: ' + txt.trim().slice(0, 60));
+  const feat = JSON.parse(txt).features[0];
+  if (+feat.properties['track-length'] > 400e3) throw new Error('Bystreet route went far off course');
+  const coords = feat.geometry.coordinates.map(c => [c[1], c[0]]);
+  // Turn the exact path into directions. Long paths go in ~60 km chunks (the matcher stops at 200 km), and
+  // where the matcher can't follow a stretch it returns the route in several pieces: keep ALL of them, in order.
+  const chunks = []; let cur = [coords[0]], acc = 0;
+  for (let i = 1; i < coords.length; i++) {
+    acc += hav(coords[i - 1], coords[i]); cur.push(coords[i]);
+    if (acc > 60 && i < coords.length - 1) { chunks.push(cur); cur = [coords[i]]; acc = 0; }
+  }
+  chunks.push(cur);
+  const parts = [];
+  for (const c of chunks) {
+    const j = await vpost('trace_route', {encoded_polyline: encode(c), shape_match: 'map_snap', costing: 'auto',
+      directions_options: {units: 'kilometers', language: 'en-US'}});
+    const near = t => { const p = decode(t.legs[0].shape)[0]; let bi = 0, bd = 1e9; c.forEach((q, i) => { const d = hav(q, p); if (d < bd) { bd = d; bi = i; } }); return bi; };
+    parts.push(...[j.trip, ...(j.alternates || []).map(a => a.trip)].filter(Boolean).map(t => ({t, at: near(t)})).sort((a, b) => a.at - b.at).map(x => x.t));
+  }
+  const legs = [], sum = {length: 0, time: 0, has_highway: false, has_toll: false, has_ferry: false};
+  parts.forEach((t, pi) => {
+    t.legs.forEach(l => legs.push({...l, maneuvers: l.maneuvers.filter(m =>
+      !(pi > 0 && [1, 2, 3].includes(m.type)) && !(pi < parts.length - 1 && [4, 5, 6].includes(m.type)))})); // no "drive off"/"arrived" mid-route
+    sum.length += t.summary.length; sum.time += t.summary.time;
+    sum.has_highway ||= t.summary.has_highway; sum.has_toll ||= t.summary.has_toll; sum.has_ferry ||= t.summary.has_ferry;
+  });
+  return finishTrip({legs, summary: sum});
+}
+
+// Variety: remember the last 6 routes as ~50 m grid cells (leaving out the first and last km,
+// where every route leaves and returns home the same way) and their starting directions.
+let recentCells = [];
+function routeCells(shape) {
+  const cells = new Set(); let tot = 0;
+  for (let i = 1; i < shape.length; i++) tot += hav(shape[i - 1], shape[i]);
+  let acc = 0;
+  for (let i = 1; i < shape.length; i++) {
+    const d = hav(shape[i - 1], shape[i]), n = Math.max(1, Math.ceil(d / .025));
+    for (let k = 0; k < n; k++) {
+      const at = acc + d * k / n; if (at < 1 || at > tot - 1) continue;
+      const f = k / n, la = shape[i - 1][0] + (shape[i][0] - shape[i - 1][0]) * f, lo = shape[i - 1][1] + (shape[i][1] - shape[i - 1][1]) * f;
+      cells.add(Math.round(la / .00045) + ',' + Math.round(lo / .00065));
+    }
+    acc += d;
+  }
+  return cells;
+}
+function similarToRecent(shape) {
+  if (!recentCells.length) return 0;
+  const c = routeCells(shape); if (!c.size) return 0;
+  return Math.max(...recentCells.map(r => { let n = 0; for (const x of c) if (r.has(x)) n++; return n / c.size; }));
+}
+function rememberRoute(rt) {
+  recentCells = [...recentCells, routeCells(rt.shape)].slice(-6);
+  if (rt.b0 != null) store.set('uf-recent-dirs', [...store.get('uf-recent-dirs', []), Math.round(rt.b0)].slice(-4));
+}
+
+function pathKm(shape) { let s = 0; for (let i = 1; i < shape.length; i++) s += hav(shape[i - 1], shape[i]); return s; }
+
+// Finds places where the route goes out to a point and comes straight back the same way,
+// and cuts them out. Returns the cleaned shape plus the original index ranges that were removed.
+function removeSpurs(shape, maxRoundTripKm = 6) {
+  const key = p => p[0].toFixed(5) + ',' + p[1].toFixed(5);
+  const out = [], pos = new Map(), cuts = [];
+  for (let j = 0; j < shape.length; j++) {
+    const p = shape[j], k = key(p), i = pos.get(k);
+    if (i !== undefined && i < out.length - 1) {
+      // Same road exactly in reverse? The stretch since i must read the same backwards (a palindrome).
+      const span = out.length - 1 - i, n = Math.floor(span / 2);
+      let reversed = true; // span 1 = a single spike point, always a turnaround
+      for (let m = 1; m <= n && reversed; m++) if (key(out[i + m].p) !== key(out[out.length - m].p)) reversed = false;
+      let len = 0; for (let q = i + 1; q < out.length; q++) len += hav(out[q - 1].p, out[q].p);
+      len += hav(out[out.length - 1].p, p);
+      // Never cut away a detour that exists to reach one of your own stops.
+      const toStop = () => stops.some(s => { for (let q = i + 1; q < out.length; q++) if (hav(out[q].p, [s.lat, s.lon]) < .25) return true; return false; });
+      // A "lasso": in along a road, around a loop, and back out the same road (first step out = last step back).
+      const lasso = !reversed && span > 2 && key(out[i + 1].p) === key(out[out.length - 1].p) && len < 2.5;
+      if ((reversed || lasso) && len < maxRoundTripKm && !(i === 0 && j === shape.length - 1) && !toStop()) {
+        for (let q = i + 1; q < out.length; q++) pos.delete(key(out[q].p));
+        cuts.push([out[i].o, j]);
+        out.length = i + 1;
+        out[i].o = j; // the junction now stands for where the route continues
+        continue;
+      }
+    }
+    pos.set(k, out.length);
+    out.push({p, o: j});
+  }
+  return {shape: out.map(x => x.p), cuts};
+}
+
+async function generate() {
+  if (!me) { setMsg('Waiting for your location. You can also tap the map to set a start.', true); return; }
+  const D = Math.min(300, Math.max(2, parseFloat($('dist').value) || 25));
+  $('dist').value = D;
+  const hw = $('hw').checked, by = $('by').checked, oneway = !$('loop').checked;
+  // Bystreets "exact": BRouter plans every side street. "areas": normal roads to a few residential areas
+  // (stops snapped onto residential streets), and you explore the side streets there yourself.
+  const exact = by && byMode === 'exact', areas = by && byMode === 'areas';
+  const T = D;                                   // km the generated route should have
+  const f = exact ? 1.9 : areas ? 1.45 : hw ? 1.25 : 1.35;       // road length vs. straight-line distance (small-street routes wander more)
+  const btn = $('goBtn'); btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Building route…';
+  setMsg(oneway ? 'Picking a random destination…' : 'Picking random roads around you…');
+  stopPicking();
+  const route_ = exact ? brouter : valhalla;
+  let best = null, shape = makeShape(hw, by, T, oneway, me, exact), fails = 0, lastErr = null;
+  let r = oneway ? T / f : T / f / (2 * Math.PI);
+  try {
+    for (let attempt = 0; attempt < (exact ? 6 : 10); attempt++) {
+      let out;
+      const wp0 = waypoints(me, shape, r), end = wp0.end;
+      const wps = areas ? await pickZones(wp0.wps) : wp0.wps;
+      try { out = await route_(me, wps, hw, by, 'through', true, end); }
+      catch (e) {
+        lastErr = e;
+        if (e.status === 429) { await sleep(2500); continue; }
+        if (exact) { if (++fails > 6) break; shape = makeShape(hw, by, T, oneway, me, exact); continue; } // BRouter has no 'via' mode to retry with
+        // A stop on a dead end can't be driven "through"; allow turning around there instead.
+        try { out = await route_(me, wps, hw, by, 'via', true, end); }
+        catch (e2) {
+          lastErr = e2;
+          if (++fails > 6) break;
+          shape = makeShape(hw, by, T, oneway, me, exact); continue; // unreachable point (lake, forest…), reshuffle
+        }
+      }
+      // Dead-end detours were cut from the shape; re-route along the cleaned path so the
+      // turn-by-turn list and navigation follow it too.
+      if (out.spurFrac > .005) {
+        try {
+          const pts = alongPath(out.shape, exact ? Math.min(18, Math.max(6, Math.round(out.km / 4))) : MAX_STOPS); // BRouter takes more points
+          const fin = out.shape[out.shape.length - 1];
+          const ref = await route_(me, pts, hw, by, 'through', false, oneway ? {lat: fin[0], lon: fin[1]} : me);
+          if (ref.spurFrac < out.spurFrac && ref.uturns <= out.uturns && (hw || !ref.highway)) out = ref;
+        } catch {}
+      }
+      if (!hw && (out.highway)) { shape = makeShape(hw, by, T, oneway, me, exact); continue; } // hard rule: no highways
+      if (out.km < Math.max(1.5, T * .15)) { lastErr = new Error('only dead-end roads found nearby'); shape = makeShape(hw, by, T, oneway, me, exact); continue; } // mostly dead-end detours: never show what's left
+      out.zones = areas ? wps.filter(p => p.zone) : [];
+      out.b0 = shape.b0; out.sim = similarToRecent(out.shape);
+      const err = Math.abs(out.km - T) / T, ov = overlap(out.shape);
+      // Turning around in the road isn't something you'd really do, so U-turns weigh heavily.
+      // ...and routes that mostly repeat one of your last few routes score worse.
+      out.score = err + ov * .6 + out.spurFrac * 2 + out.uturns * .25 + Math.max(0, out.sim - .2) * 1.2;
+      if (!best || out.score < best.score) best = out;
+      setMsg(`Trying… ${fmt(out.km)} km found`);
+      if (err < (exact ? .12 : .08) && ov < .15 && out.spurFrac < .01 && !out.uturns && out.sim < .35) break;
+      if (out.sim >= .35) shape = makeShape(hw, by, T, oneway, me, exact);
+      // A U-turn usually means a stop is approached from the wrong side: try another order/direction.
+      if (ov > .3 || out.uturns) shape = makeShape(hw, by, T, oneway, me, exact);
+      r *= Math.pow(T / out.km, exact ? 1 : .9);
+    }
+    if (!best) throw lastErr || new Error(hw ? 'No route' : 'Every route we found used a highway');
+    best.oneway = oneway; best.areas = areas;
+    rememberRoute(best);
+    try { setMsg('Estimating drive time…'); best.sec = await driveTimeSec(best); } catch {}
+    showRoute(best, hw, by, T);
+  } catch (e) {
+    setMsg(navigator.onLine ? `Couldn't build a route here (${e.message}). Try again, change the distance, or tap the map to start from a nearby street.` : 'You\'re offline. Routing needs internet.', true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Generate random route';
+  }
+}
+
+/* ---------- Road weather (Open-Meteo, no key needed) ----------
+   Checks the hours around now at points along the route:
+   ice  = freezing rain/drizzle or rime fog, or ground/air near 0 °C during or after precipitation, or frost (ground ≤ 0 °C, humidity ≥ 95 %)
+   snow = snowfall now/soon, or ≥ 0.5 cm fallen in the last 6 h
+   fog  = fog codes or visibility under 300 m */
+const WX = 'https://api.open-meteo.com/v1/forecast';
+const FREEZING = [56, 57, 66, 67], SNOWC = [71, 73, 75, 77, 85, 86], FOGC = [45, 48];
+let avoidAreas = [], icePins = [], wxSeq = 0, areaWxAt = 0;
+async function weatherAt(points) {
+  const url = `${WX}?latitude=${points.map(p => p.lat.toFixed(4)).join(',')}&longitude=${points.map(p => p.lon.toFixed(4)).join(',')}` +
+    '&hourly=temperature_2m,relative_humidity_2m,precipitation,snowfall,weather_code,visibility,soil_temperature_0cm&past_hours=6&forecast_hours=4&timeformat=unixtime';
+  const j = await (await fetch(url)).json();
+  const arr = Array.isArray(j) ? j : [j], now = Date.now() / 1000;
+  return arr.map(d => {
+    const h = d.hourly, T = h.time, idx = T.map((_, i) => i);
+    const win = idx.filter(i => T[i] >= now - 3600 && T[i] <= now + 3 * 3600);
+    const past = idx.filter(i => T[i] <= now && T[i] > now - 6 * 3600);
+    const cur = Math.max(0, ...idx.filter(i => T[i] <= now));
+    const sum = (ids, k) => ids.reduce((acc, i) => acc + (h[k][i] || 0), 0);
+    const code = i => h.weather_code[i];
+    const freezing = win.some(i => FREEZING.includes(code(i)));
+    const cold = win.some(i => h.temperature_2m[i] <= 1 || h.soil_temperature_0cm[i] <= 0);
+    const wet = sum(past, 'precipitation') > .2 || win.some(i => h.precipitation[i] > 0);
+    const frost = win.some(i => h.soil_temperature_0cm[i] <= 0 && h.relative_humidity_2m[i] >= 95);
+    const ice = freezing || (cold && wet) || frost || win.some(i => code(i) === 48);
+    const snow = win.some(i => SNOWC.includes(code(i)) || h.snowfall[i] > .1) || sum(past, 'snowfall') >= .5;
+    const fog = win.some(i => FOGC.includes(code(i)) || (h.visibility[i] != null && h.visibility[i] < 300));
+    return {ice, freezing, snow, fog, temp: h.temperature_2m[cur]};
+  });
+}
+const WXICON = {
+  ok: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  ice: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.5"/></svg>',
+  snow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2v20M3.3 7l17.4 10M3.3 17 20.7 7M9 4l3 2 3-2M9 20l3-2 3 2"/></svg>',
+  fog: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 8h16M2 12h20M4 16h16M7 20h10"/></svg>'
+};
+function setChip(kind, icon, title, sub, details) {
+  const c = $('wxChip');
+  c.className = 'wxchip ' + kind; c.hidden = false;
+  c.innerHTML = WXICON[icon] + `<span><b>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>`;
+  $('wxDetail').innerHTML = details; $('wxDetail').hidden = true; c.setAttribute('aria-expanded', 'false');
+}
+$('wxChip').onclick = () => { const d = $('wxDetail'); d.hidden = !d.hidden; $('wxChip').setAttribute('aria-expanded', String(!d.hidden)); };
+function clearIcePins() { icePins.forEach(l => map.removeLayer(l)); icePins = []; }
+
+// Before a route exists: the weather where you are.
+async function checkAreaWeather() {
+  if (!me || route || Date.now() - areaWxAt < 15 * 60e3) return;
+  areaWxAt = Date.now();
+  try {
+    const [w] = await weatherAt([me]);
+    if (route) return;
+    const why = [w.freezing && 'freezing rain', w.ice && !w.freezing && 'icy roads likely', w.snow && 'snow on the roads', w.fog && 'thick fog'].filter(Boolean);
+    const t = w.temp != null ? `${Math.round(w.temp)} °C` : '';
+    if (why.length) setChip('bad', w.ice ? 'ice' : w.snow ? 'snow' : 'fog', 'Bad day for a drive', why.join(', ').replace(/^./, c => c.toUpperCase()),
+      `<b>Around you right now</b><ul>${why.map(x => `<li>${esc(x)}</li>`).join('')}</ul>${t ? `Temperature ${t}. ` : ''}Generate a route to check the roads along it.`);
+    else setChip('ok', 'ok', 'Roads look clear', t, `No ice, snow or fog expected around you in the next hours${t ? ` (${t})` : ''}.`);
+  } catch {}
+}
+
+// With a route: points every ~4 km along it.
+async function checkRouteWeather(rt) {
+  const seq = ++wxSeq;
+  $('wxPop').hidden = true; clearIcePins();
+  const n = Math.min(15, Math.max(3, Math.round(rt.km / 4)));
+  const pts = [rt.shape[0], ...samplePoints(rt.shape, n), rt.shape[rt.shape.length - 1]].map(([lat, lon]) => ({lat, lon}));
+  const cum = [0]; for (let i = 1; i < rt.shape.length; i++) cum.push(cum[i - 1] + hav(rt.shape[i - 1], rt.shape[i]));
+  const kmAt = p => { let bi = 0, bd = 1e9; rt.shape.forEach((q, i) => { const d = hav(q, [p.lat, p.lon]); if (d < bd) { bd = d; bi = i; } }); return cum[bi]; };
+  let res;
+  try { res = await weatherAt(pts); } catch { return; }
+  if (seq !== wxSeq || route !== rt) return;
+  const N = res.length, share = k => res.filter(r => r[k]).length / N;
+  const temps = res.map(r => r.temp).filter(t => t != null);
+  const tr = temps.length ? `${Math.round(Math.min(...temps))} to ${Math.round(Math.max(...temps))} °C` : '';
+  const icy = pts.filter((_, i) => res[i].ice);
+  const list = [];
+  if (share('freezing')) list.push('Freezing rain on parts of the route');
+  if (share('ice')) list.push(`Ice risk at ${icy.length} of ${N} checked spots`);
+  if (share('snow')) list.push(`Snow at ${res.filter(r => r.snow).length} of ${N} checked spots`);
+  if (share('fog')) list.push(`Fog at ${res.filter(r => r.fog).length} of ${N} checked spots`);
+  const details = `<b>Along this route, now until 3 h from now</b>${list.length ? `<ul>${list.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<br>No ice, snow or fog expected. '}${tr ? `Temperatures ${tr}.` : ''}`;
+  icy.forEach(p => icePins.push(L.marker([p.lat, p.lon], {zIndexOffset: 700, interactive: false, icon: L.divIcon({className: '', html: '<div class="icepin"></div>', iconSize: [18, 18]})}).addTo(map)));
+
+  if (share('freezing') > 0 || share('ice') >= .4 || share('snow') >= .4 || share('fog') >= .4) {
+    const why = share('freezing') ? 'Freezing rain' : share('ice') >= .4 ? 'Icy roads likely on most of the route' : share('snow') >= .4 ? 'Snow on most of the route' : 'Thick fog on most of the route';
+    setChip('bad', share('ice') >= .4 || share('freezing') ? 'ice' : share('snow') >= .4 ? 'snow' : 'fog', 'Bad day for a drive', why, details);
+  } else if (icy.length && !(icy.length <= 2 && share('ice') < .25 && !res[0].ice)) {
+    // Ice in several places (or right where you start): a different route would most likely be icy too,
+    // so warn without offering a new one.
+    setChip('warn', 'ice', 'Ice in several places', `${icy.length} of ${N} checked spots · drive carefully`, details);
+  } else if (icy.length) {
+    // Only offer a new route when the ice is isolated: 1–2 spots, under a quarter of the route, not at the start.
+    const kms = icy.map(p => Math.round(kmAt(p)));
+    setChip('warn', 'ice', 'Ice risk on part of the route', `Near km ${kms.join(', ')}`, details);
+    $('wxPopText').textContent = `Ice is likely ${kms.length === 1 ? `in one spot, near km ${kms[0]}` : `near km ${kms.join(' and ')}`} of this route. Want a new route that stays away from it?`;
+    $('wxPop').hidden = false;
+    $('wxNew').onclick = () => {
+      // Keep new routes ~1.5 km away from the icy spots (except right where you start).
+      avoidAreas = icy.filter(p => !me || hav([me.lat, me.lon], [p.lat, p.lon]) > 2).map(p => ({lat: p.lat, lon: p.lon, r: 1.5}));
+      $('wxPop').hidden = true;
+      generate();
+    };
+    $('wxKeep').onclick = () => { $('wxPop').hidden = true; };
+  } else if (share('snow') || share('fog')) {
+    setChip('warn', share('snow') ? 'snow' : 'fog', share('snow') ? 'Snow on part of the route' : 'Fog on part of the route', tr, details);
+  } else {
+    setChip('ok', 'ok', 'Roads look clear', tr, details);
+  }
+}
+// Circle as a ring of [lon, lat] for the router's exclude_polygons.
+function circleRing(c, km) {
+  const ring = [];
+  for (let a = 0; a <= 360; a += 30) { const p = dest(c, a, km); ring.push([p.lon, p.lat]); }
+  return ring;
+}
+
+/* ---------- Result ---------- */
+let lineLayer = null;
+function clearRoute() {
+  routeLayers.forEach(l => map.removeLayer(l)); routeLayers = [];
+  if (lineLayer) { map.removeLayer(lineLayer); lineLayer = null; }
+}
+// Colour along the route: blue at the start → violet → orange at the end.
+const GRAD = [[47, 124, 246], [167, 89, 230], [255, 122, 61]];
+function gradColor(t) {
+  const s = t < .5 ? 0 : 1, u = t < .5 ? t * 2 : (t - .5) * 2, a = GRAD[s], b = GRAD[s + 1];
+  return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * u)).join(',')})`;
+}
+// Draws the route for the current zoom: each direction sits slightly to its right-hand side
+// (like driving in your lane), coloured by progress, with arrows every ~70 px.
+function drawLine() {
+  if (!route) return;
+  if (lineLayer) map.removeLayer(lineLayer);
+  const OFF = 3.5, pts = [];
+  for (const ll of route.shape) {
+    const p = map.latLngToLayerPoint(ll);
+    if (!pts.length || p.distanceTo(pts[pts.length - 1]) > .5) pts.push(p);
+  }
+  const n = pts.length;
+  if (n < 2) return;
+  const segN = [];
+  for (let i = 0; i < n - 1; i++) {
+    const dx = pts[i + 1].x - pts[i].x, dy = pts[i + 1].y - pts[i].y, L2 = Math.hypot(dx, dy) || 1;
+    segN.push([-dy / L2, dx / L2]); // right-hand normal on screen (y points down)
+  }
+  const off = pts.map((p, i) => {
+    const a = segN[Math.max(0, i - 1)], b = segN[Math.min(n - 2, i)];
+    let nx = a[0] + b[0], ny = a[1] + b[1]; const l = Math.hypot(nx, ny);
+    if (l < .3) { nx = b[0]; ny = b[1]; } else { nx /= l; ny /= l; }
+    const k = Math.min(OFF / Math.max(l / 2, .5), OFF * 2); // keep corners from spiking
+    return L.point(p.x + nx * k, p.y + ny * k);
+  });
+  const lls = off.map(p => map.layerPointToLatLng(p));
+  const cum = [0];
+  for (let i = 1; i < n; i++) cum.push(cum[i - 1] + off[i].distanceTo(off[i - 1]));
+  const total = cum[n - 1] || 1, g = L.layerGroup();
+  L.polyline(lls, {color: css('--route-case'), weight: 9, opacity: .85, interactive: false}).addTo(g);
+  // Colour chunks
+  const CH = 40; let i0 = 0;
+  for (let c = 1; c <= CH; c++) {
+    let i1 = i0; const lim = total * c / CH;
+    while (i1 < n - 1 && cum[i1] < lim) i1++;
+    if (i1 > i0) L.polyline(lls.slice(i0, i1 + 1), {color: gradColor((c - .5) / CH), weight: 5, opacity: 1, interactive: false, lineCap: 'butt'}).addTo(g);
+    i0 = i1;
+  }
+  // Arrows every 70 px along the whole route, but only placed where they're on screen
+  // (plus a margin), so zooming in never runs out of arrows. Redrawn on pan and zoom.
+  const tl = map.containerPointToLayerPoint([0, 0]), br = map.containerPointToLayerPoint(map.getSize());
+  const view = L.bounds(tl.subtract([150, 150]), br.add([150, 150]));
+  const step = 70; let next = 35, j = 0, count = 0;
+  while (next < total && count < 400) {
+    while (j < n - 2 && cum[j + 1] < next) j++;
+    const seg = cum[j + 1] - cum[j] || 1, t = (next - cum[j]) / seg;
+    const x = off[j].x + (off[j + 1].x - off[j].x) * t, y = off[j].y + (off[j + 1].y - off[j].y) * t;
+    if (!view.contains(L.point(x, y))) { next += step; continue; }
+    const ang = Math.atan2(off[j + 1].y - off[j].y, off[j + 1].x - off[j].x) * 180 / Math.PI;
+    L.marker(map.layerPointToLatLng(L.point(x, y)), {interactive: false, keyboard: false, icon: L.divIcon({className: 'rarrow', iconSize: [12, 12],
+      html: `<svg width="12" height="12" viewBox="0 0 12 12" style="display:block;transform:rotate(${ang}deg)"><path d="M3 2 9 6 3 10" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`})}).addTo(g);
+    next += step; count++;
+  }
+  lineLayer = g.addTo(map);
+}
+map.on('moveend', drawLine); // fires after every pan and zoom
+function showRoute(rt, hw, by, D) {
+  route = rt; route.hw = hw; route.by = by;
+  checkRouteWeather(rt);
+  // Areas mode: put each zone on the route (nearest point) so it's where you'll actually pass.
+  rt.zonePts = (rt.zones || []).map(z => { let b = rt.shape[0], bd = 1e9; rt.shape.forEach(q => { const d = hav(q, [z.lat, z.lon]); if (d < bd) { bd = d; b = q; } }); return {lat: b[0], lon: b[1]}; });
+  clearRoute();
+  const tot = rt.shape.length;
+  drawLine();
+  rt.zonePts.forEach((z, i) => {
+    const c = rt.zones[i];
+    routeLayers.push(L.circle([c.lat, c.lon], {radius: 450, color: css('--ok'), weight: 2, dashArray: '6 6', fillColor: css('--ok'), fillOpacity: .12, interactive: false}).addTo(map));
+    routeLayers.push(L.marker([c.lat, c.lon], {interactive: false, zIndexOffset: 600, icon: L.divIcon({className: '', iconSize: [0, 0], html: `<span class="zonelabel">Explore ${i + 1}</span>`})}).addTo(map));
+  });
+  routeLayers.push(L.marker(rt.shape[0], {zIndexOffset: 800, icon: L.divIcon({className: '', html: '<div class="startpin">S</div>', iconSize: [22, 22]})}).addTo(map));
+  if (rt.oneway) routeLayers.push(L.marker(rt.shape[tot - 1], {icon: L.divIcon({className: '', html: '<div class="startpin finish">Z</div>', iconSize: [22, 22]})}).addTo(map));
+
+  const turns = rt.man.filter(m => ![1, 2, 3, 4, 5, 6, 8, 22, 23].includes(m.type)).length;
+  $('rKm').textContent = fmt(rt.km) + ' km';
+  const mins = Math.round(rt.sec / 60);
+  $('rTime').textContent = mins >= 60 ? `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')} h` : `${mins} min`;
+  $('rTurns').textContent = turns;
+  const pills = [];
+  pills.push(rt.highway ? '<span class="pill hw">Includes highway · Vignette needed</span>' : '<span class="pill nohw">No highways</span>');
+  if (by) pills.push(!rt.areas ? '<span class="pill by">Bystreet focus</span>'
+    : rt.zonePts.length ? `<span class="pill by">Explore the side streets in the ${rt.zonePts.length} circled area${rt.zonePts.length > 1 ? 's' : ''}</span>`
+    : '<span class="pill">No built-up areas found nearby · try New route</span>');
+  if (rt.toll) pills.push('<span class="pill hw">Toll section</span>');
+  if (rt.uturns) pills.push(`<span class="pill hw">${rt.uturns} U-turn${rt.uturns > 1 ? 's' : ''} on this route</span>`);
+  if (Math.abs(rt.km - D) / D > .15) pills.push(`<span class="pill">Closest to ${fmt(D)} km we found</span>`);
+  if (rt.oneway) pills.unshift('<span class="pill by">One way</span>');
+  $('rPills').innerHTML = pills.join('');
+  const kind = rt.oneway ? 'drive out' : 'loop';
+  $('resTitle').textContent = by ? (rt.areas ? `Side-street areas ${kind}` : `Tight-streets ${kind}`) : rt.highway ? `Mixed ${kind} with highway` : `Country & town ${kind}`;
+  $('navTip').textContent = hw ? 'Opens Google Maps with the route as stops.'
+    : 'Opens Google Maps with the route as stops. Tip: in Google Maps, turn on Route options → Avoid highways, so it doesn\'t shortcut between stops.';
+  $('homeBtn').hidden = !rt.oneway;
+  show('result');
+  requestAnimationFrame(() => map.fitBounds(L.latLngBounds(rt.shape), {paddingTopLeft: [20, 80], paddingBottomRight: [20, $('sheet').offsetHeight + 20]}));
+}
+function esc(s) { return String(s || '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])); }
+
+function samplePoints(shape, n) {
+  const cum = [0];
+  for (let i = 1; i < shape.length; i++) cum.push(cum[i - 1] + hav(shape[i - 1], shape[i]));
+  const tot = cum[cum.length - 1], out = []; let j = 0;
+  for (let i = 1; i <= n; i++) {
+    const t = tot * i / (n + 1);
+    while (j < cum.length - 1 && cum[j] < t) j++;
+    out.push(shape[j]);
+  }
+  return out;
+}
+// n points along a path: your stops plus evenly spaced samples, in the order the path reaches them.
+function alongPath(shape, n, extra = []) {
+  const near = p => { let bi = 0, bd = 1e9; shape.forEach((q, i) => { const d = hav(q, [p.lat, p.lon]); if (d < bd) { bd = d; bi = i; } }); return bi; };
+  const must = [...stops.map(s => ({lat: s.lat, lon: s.lon, user: true})), ...extra.slice(0, Math.max(0, n - stops.length))];
+  return [...samplePoints(shape, Math.max(0, n - must.length)).map(([lat, lon]) => ({lat, lon})), ...must]
+    .map(p => ({...p, idx: near(p)})).sort((a, b) => a.idx - b.idx);
+}
+// Way back: from wherever you are now to the start, Google Maps picks the route.
+$('navBtn').onclick = () => {
+  if (!route) return;
+  const s = route.shape[0], e = route.shape[route.shape.length - 1];
+  // Google Maps links take up to 9 stops; your own stops are always among them.
+  const wp = alongPath(route.shape, route.oneway ? 7 : 8, route.zonePts || []).map(p => p.lat.toFixed(6) + ',' + p.lon.toFixed(6)).join('|');
+  const url = `https://www.google.com/maps/dir/?api=1&origin=${s[0]},${s[1]}&destination=${e[0]},${e[1]}&waypoints=${encodeURIComponent(wp)}&travelmode=driving&dir_action=navigate`;
+  window.open(url, '_blank');
+};
+$('homeBtn').onclick = () => {
+  if (!route) return;
+  const s = route.shape[0];
+  window.open(`https://www.google.com/maps/dir/?api=1&destination=${s[0]},${s[1]}&travelmode=driving&dir_action=navigate`, '_blank');
+};
+$('gpxBtn').onclick = async () => {
+  if (!route) return;
+  const date = new Date().toISOString();
+  const pts = route.shape.map(p => `<trkpt lat="${p[0]}" lon="${p[1]}"/>`).join('');
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Zufallsroute" xmlns="http://www.topografix.com/GPX/1/1"><metadata><time>${date}</time></metadata><trk><name>Zufallsroute ${fmt(route.km)} km</name><trkseg>${pts}</trkseg></trk></gpx>`;
+  const name = `zufallsroute-${date.slice(0, 10)}-${Math.round(route.km)}km.gpx`;
+  const file = new File([gpx], name, {type: 'application/gpx+xml'});
+  try {
+    if (navigator.canShare && navigator.canShare({files: [file]})) { await navigator.share({files: [file], title: name}); return; }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+};
+$('againBtn').onclick = generate;
+$('backBtn').onclick = () => {
+  route = null; clearRoute(); show('setup'); setMsg('Ready. Set your distance and go.'); if (me) map.setView([me.lat, me.lon], 14);
+  avoidAreas = []; clearIcePins(); $('wxPop').hidden = true; areaWxAt = 0; checkAreaWeather();
+};
+$('goBtn').onclick = generate;
+startGeo();
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
