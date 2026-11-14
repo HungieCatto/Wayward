@@ -1,5 +1,5 @@
 // Caches the app shell so the app opens instantly and offline (routing still needs internet).
-const CACHE = 'wayward-v3';
+const CACHE = 'wayward-v4';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
