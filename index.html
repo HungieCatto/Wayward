@@ -99,10 +99,7 @@ h2{font:800 20px/1.15 var(--display);margin:0 0 12px;letter-spacing:.01em;text-w
 
 /* Road weather chip + popup */
 .wx{position:fixed;z-index:22;right:max(14px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 64px);
-  display:flex;flex-direction:column;align-items:flex-end;gap:8px;max-width:calc(100% - 28px)}
-.wxrow{display:flex;gap:8px;justify-content:flex-end;align-items:flex-start;max-width:100%}
-.wxrow .wxchip{min-width:0}
-.wxdetail{max-width:320px}
+  display:flex;flex-direction:column;align-items:flex-end;gap:8px;max-width:min(320px,calc(100% - 28px))}
 .wxchip{display:flex;align-items:center;gap:8px;border:0;border-radius:12px;padding:8px 12px;font:600 13px/1.25 var(--body);
   box-shadow:var(--shadow);cursor:pointer;text-align:left;background:var(--surface);color:var(--fg)}
 .wxchip svg{flex:none}
@@ -214,11 +211,9 @@ ol.turns .km{color:var(--muted);font-variant-numeric:tabular-nums;white-space:no
 </div>
 
 <div class="wx" id="wx" aria-live="polite">
-  <div class="wxrow">
-    <button class="wxchip" id="litChip" hidden aria-expanded="false"></button>
-    <button class="wxchip" id="wxChip" hidden aria-expanded="false"></button>
-  </div>
+  <button class="wxchip" id="wxChip" hidden aria-expanded="false"></button>
   <div class="wxdetail" id="wxDetail" hidden></div>
+  <button class="wxchip" id="litChip" hidden aria-expanded="false"></button>
   <div class="wxdetail" id="litDetail" hidden></div>
   <div class="wxpop" id="wxPop" hidden role="dialog" aria-label="Ice on the route">
     <p id="wxPopText"></p>
