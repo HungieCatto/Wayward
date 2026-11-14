@@ -1,6 +1,6 @@
 {
-  "name": "Zufallsroute – random driving routes",
-  "short_name": "Zufallsroute",
+  "name": "Wayward – random driving routes",
+  "short_name": "Wayward",
   "description": "Random driving routes from your location: loops or one way, with or without highways.",
   "start_url": "./",
   "scope": "./",

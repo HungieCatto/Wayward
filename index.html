@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Zufallsroute</title>
+<title>Wayward</title>
 <meta name="description" content="Random driving routes from your location: loops or one way, with or without highways.">
 <meta name="theme-color" content="#10282f">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Zufallsroute">
+<meta name="apple-mobile-web-app-title" content="Wayward">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -202,7 +202,7 @@ ol.turns .km{color:var(--muted);font-variant-numeric:tabular-nums;white-space:no
 <div id="map" aria-label="Map"></div>
 
 <div class="top">
-  <div class="brand"><img src="icon-192.png" alt=""><b>Zufallsroute</b></div>
+  <div class="brand"><img src="icon-192.png" alt=""><b>Wayward</b></div>
   <button class="locbtn" id="locBtn" aria-label="Centre on my location">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
   </button>
@@ -1504,8 +1504,8 @@ $('gpxBtn').onclick = async () => {
   if (!route) return;
   const date = new Date().toISOString();
   const pts = route.shape.map(p => `<trkpt lat="${p[0]}" lon="${p[1]}"/>`).join('');
-  const gpx = `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Zufallsroute" xmlns="http://www.topografix.com/GPX/1/1"><metadata><time>${date}</time></metadata><trk><name>Zufallsroute ${fmt(route.km)} km</name><trkseg>${pts}</trkseg></trk></gpx>`;
-  const name = `zufallsroute-${date.slice(0, 10)}-${Math.round(route.km)}km.gpx`;
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Wayward" xmlns="http://www.topografix.com/GPX/1/1"><metadata><time>${date}</time></metadata><trk><name>Wayward ${fmt(route.km)} km</name><trkseg>${pts}</trkseg></trk></gpx>`;
+  const name = `wayward-${date.slice(0, 10)}-${Math.round(route.km)}km.gpx`;
   const file = new File([gpx], name, {type: 'application/gpx+xml'});
   try {
     if (navigator.canShare && navigator.canShare({files: [file]})) { await navigator.share({files: [file], title: name}); return; }
