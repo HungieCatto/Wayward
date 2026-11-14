@@ -328,7 +328,8 @@ $('loop').checked = settings.loop !== false;
 
 /* ---------- Map ---------- */
 const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-const map = L.map('map', {zoomControl: false, attributionControl: true}).setView([47.6, 14.1], 7); // Austria
+// Lines are drawn a full screen beyond each edge (padding 1), so panning doesn't reveal cut-off ends.
+const map = L.map('map', {zoomControl: false, attributionControl: true, renderer: L.svg({padding: 1})}).setView([47.6, 14.1], 7); // Austria
 map.attributionControl.setPrefix(false);
 // Map credits (required by the OpenStreetMap licence) sit behind a small ⓘ button instead of a permanent bar.
 L.Control.AttrToggle = L.Control.extend({onAdd() {
@@ -341,6 +342,7 @@ L.Control.AttrToggle = L.Control.extend({onAdd() {
 new L.Control.AttrToggle({position: 'bottomright'}).addTo(map);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19, className: dark ? 'tiles-dark' : '',
+  updateWhenIdle: false, updateInterval: 150, keepBuffer: 4, // load tiles while panning (phones otherwise wait until you let go)
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · Routing <a href="https://valhalla.github.io/valhalla/">Valhalla</a>'
 }).addTo(map);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -1412,7 +1414,7 @@ function drawLine() {
   // Arrows every 70 px along the whole route, but only placed where they're on screen
   // (plus a margin), so zooming in never runs out of arrows. Redrawn on pan and zoom.
   const tl = map.containerPointToLayerPoint([0, 0]), br = map.containerPointToLayerPoint(map.getSize());
-  const view = L.bounds(tl.subtract([150, 150]), br.add([150, 150]));
+  const sz = map.getSize(), view = L.bounds(tl.subtract(sz), br.add(sz)); // one screen of margin on every side
   const step = 70; let next = 35, j = 0, count = 0;
   while (next < total && count < 400) {
     while (j < n - 2 && cum[j + 1] < next) j++;
@@ -1427,6 +1429,15 @@ function drawLine() {
   lineLayer = g.addTo(map);
 }
 map.on('moveend', drawLine); // fires after every pan and zoom
+// Also refresh while panning, at most ~3 times a second (not during zoom animations).
+let lastDraw = 0, zooming = false;
+map.on('zoomstart', () => { zooming = true; });
+map.on('zoomend', () => { zooming = false; });
+map.on('move', () => {
+  const t = performance.now();
+  if (zooming || t - lastDraw < 300) return;
+  lastDraw = t; drawLine();
+});
 function showRoute(rt, hw, by, D) {
   route = rt; route.hw = hw; route.by = by;
   checkRouteWeather(rt);
